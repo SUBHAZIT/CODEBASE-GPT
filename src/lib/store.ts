@@ -18,6 +18,10 @@ interface RepoStore {
   isIndexing: boolean;
   indexingStage: number;
   indexingMessage: string;
+  // On-demand mode state
+  indexMode: "full" | "on-demand";
+  totalSourceFiles: number;
+  unfetchedFiles: { path: string; size: number }[];
   
   // IDE State
   openedFiles: string[]; // Paths of currently open tabs
@@ -32,6 +36,9 @@ interface RepoStore {
     fileContents: RepoFile[];
     repoContext: string;
     githubToken?: string;
+    indexMode?: "full" | "on-demand";
+    totalSourceFiles?: number;
+    unfetchedFiles?: { path: string; size: number }[];
   }) => void;
   setOverview: (overview: OverviewData) => void;
   setIndexing: (isIndexing: boolean, stage?: number, message?: string) => void;
@@ -59,6 +66,9 @@ export const useRepoStore = create<RepoStore>((set) => ({
   isIndexing: false,
   indexingStage: 0,
   indexingMessage: "",
+  indexMode: "full",
+  totalSourceFiles: 0,
+  unfetchedFiles: [],
 
   openedFiles: [],
   activeFilePath: null,
@@ -76,6 +86,9 @@ export const useRepoStore = create<RepoStore>((set) => ({
       fileContents: data.fileContents,
       repoContext: data.repoContext,
       githubToken: data.githubToken || null,
+      indexMode: data.indexMode || "full",
+      totalSourceFiles: data.totalSourceFiles || 0,
+      unfetchedFiles: data.unfetchedFiles || [],
     }),
 
   setOverview: (overview) => set({ overview }),
@@ -146,6 +159,9 @@ export const useRepoStore = create<RepoStore>((set) => ({
       isIndexing: false,
       indexingStage: 0,
       indexingMessage: "",
+      indexMode: "full",
+      totalSourceFiles: 0,
+      unfetchedFiles: [],
       openedFiles: [],
       activeFilePath: null,
       dirtyFiles: new Set(),

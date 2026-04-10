@@ -20,10 +20,26 @@ var CodebaseGPTClient = class {
     return data;
   }
   async generateOverview(repoContext) {
-    const { data, error } = await this.supabase.functions.invoke("chat", {
-      body: { action: "overview", repoContext }
+    const resp = await fetch(`${this.supabaseUrl}/functions/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.supabaseKey}`
+      },
+      body: JSON.stringify({ action: "overview", repoContext })
     });
-    if (error) throw new Error(error.message || "Failed to generate overview");
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => "");
+      let errorMsg = `Overview generation failed (HTTP ${resp.status})`;
+      try {
+        const parsed = JSON.parse(errBody);
+        if (parsed.error) errorMsg = parsed.error;
+      } catch {
+        if (errBody) errorMsg += `: ${errBody.slice(0, 300)}`;
+      }
+      throw new Error(errorMsg);
+    }
+    const data = await resp.json();
     if (data?.error) throw new Error(data.error);
     try {
       let content = data.content || "";
@@ -85,18 +101,80 @@ var CodebaseGPTClient = class {
     return data.content || "";
   }
   async fetchIssues(owner, repo, state = "open", githubToken) {
-    const { data, error } = await this.supabase.functions.invoke("repo-issues", {
-      body: { owner, repo, state, githubToken }
-    });
-    if (error) throw new Error(error.message || "Failed to fetch issues");
-    if (data?.error) throw new Error(data.error);
-    return data.issues || [];
+    try {
+      const headers = {
+        Accept: "application/vnd.github.v3+json"
+      };
+      if (githubToken) {
+        headers.Authorization = `Bearer ${githubToken}`;
+      }
+      const params = new URLSearchParams({
+        state,
+        per_page: "30",
+        sort: "updated",
+        direction: "desc"
+      });
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/issues?${params}`,
+        { headers }
+      );
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error(`Repository ${owner}/${repo} not found. Check the repo name or add a GitHub token for private repos.`);
+        }
+        if (res.status === 403) {
+          throw new Error("GitHub API rate limit reached. Add a GitHub Personal Access Token to increase your limit.");
+        }
+        throw new Error(`GitHub API error: ${res.status}`);
+      }
+      const issues = await res.json();
+      const filtered = issues.filter((i) => !i.pull_request).map((i) => ({
+        number: i.number,
+        title: i.title,
+        body: (i.body || "").slice(0, 2e3),
+        state: i.state,
+        labels: i.labels.map((l) => ({ name: l.name, color: l.color })),
+        user: { login: i.user.login, avatar_url: i.user.avatar_url },
+        comments: i.comments,
+        created_at: i.created_at,
+        updated_at: i.updated_at,
+        html_url: i.html_url
+      }));
+      return filtered;
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      throw new Error("Something went wrong while fetching issues. Please try again.");
+    }
   }
   async fetchFileContent(params) {
-    const { data, error } = await this.supabase.functions.invoke("repo-file", {
+    const url = `${this.supabaseUrl}/functions/v1/repo-file`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.supabaseKey}`
+      },
+      body: JSON.stringify(params)
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}: ${errText || res.statusText}`);
+    }
+    const data = await res.json();
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+    return data;
+  }
+  /**
+   * Fetch multiple files in a single batch request (for on-demand mode).
+   * Max 10 files per batch.
+   */
+  async fetchFileBatch(params) {
+    const { data, error } = await this.supabase.functions.invoke("repo-fetch-batch", {
       body: params
     });
-    if (error) throw new Error(error.message || "Failed to fetch file content");
+    if (error) throw new Error(error.message || "Failed to fetch file batch");
     if (data?.error) throw new Error(data.error);
     return data;
   }

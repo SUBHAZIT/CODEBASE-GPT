@@ -2,3 +2,6 @@ node_modules
 .env
 .DS_Store
 dist
+
+# Keep the compiled GitHub Action script so PRGPT can run on GitHub
+!PRGPT/dist

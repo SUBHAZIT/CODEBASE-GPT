@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { ChevronRight, ChevronDown, FileCode, Folder, FolderOpen, Search } from "lucide-react";
+import { ChevronRight, ChevronDown, FileCode, Folder, FolderOpen, Search, Loader2, CloudDownload } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { FileTreeNode } from "@/lib/mock-data";
+import { useRepoStore } from "@/lib/store";
+import { fetchFileContent } from "@/lib/api";
 
 interface FileTreeProps {
   tree: FileTreeNode[];
@@ -16,6 +18,8 @@ const FileTreeItem = ({
   selectedFile?: string; filter: string;
 }) => {
   const [expanded, setExpanded] = useState(depth < 2);
+  const [isLoading, setIsLoading] = useState(false);
+  const { fileContents, indexMode, meta, githubToken, upsertFileContent } = useRepoStore();
 
   const matchesFilter = filter
     ? node.name.toLowerCase().includes(filter.toLowerCase()) ||
@@ -23,6 +27,11 @@ const FileTreeItem = ({
     : true;
 
   if (!matchesFilter && !filter) return null;
+
+  // Check on-demand status for file nodes
+  const isOnDemand = indexMode === "on-demand";
+  const hasContent = node.type === "file" && fileContents.some(f => f.path === node.path);
+  const needsFetch = node.type === "file" && isOnDemand && !hasContent;
 
   if (node.type === "folder") {
     return (
@@ -41,13 +50,43 @@ const FileTreeItem = ({
     );
   }
 
+  const handleFileClick = async () => {
+    onFileSelect(node.path);
+
+    // Lazy-fetch on-demand files
+    if (needsFetch && meta?.owner && meta?.name && !isLoading) {
+      setIsLoading(true);
+      try {
+        const res = await fetchFileContent({
+          owner: meta.owner,
+          repo: meta.name,
+          path: node.path,
+          githubToken: githubToken || undefined,
+        });
+        if (res.content) {
+          upsertFileContent({ path: res.path, content: res.content, size: res.size });
+        }
+      } catch (err) {
+        console.error(`Failed to lazy-fetch ${node.path}:`, err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
   return (
-    <button onClick={() => onFileSelect(node.path)}
+    <button onClick={handleFileClick}
       className={`flex items-center gap-1.5 w-full py-0.5 px-1.5 text-[11px] rounded transition-colors ${
-        selectedFile === node.path ? "bg-accent/40 text-primary" : "text-muted-foreground hover:bg-accent/30 hover:text-foreground"
+        selectedFile === node.path ? "bg-accent/40 text-primary" : needsFetch ? "text-muted-foreground/60 hover:bg-accent/30 hover:text-foreground" : "text-muted-foreground hover:bg-accent/30 hover:text-foreground"
       }`}
       style={{ paddingLeft: `${depth * 12 + 6}px` }}>
-      <FileCode className="h-3 w-3 shrink-0" />
+      {isLoading ? (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
+      ) : needsFetch ? (
+        <CloudDownload className="h-3 w-3 shrink-0 text-amber-500/60" />
+      ) : (
+        <FileCode className="h-3 w-3 shrink-0" />
+      )}
       <span className="truncate">{node.name}</span>
     </button>
   );

@@ -44,6 +44,7 @@ const FileViewer = ({ citation, onClose, repoOwner, repoName, githubToken }: Fil
   const { fileContents, meta, githubToken: storeToken, upsertFileContent } = useRepoStore();
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   const owner = repoOwner ?? meta?.owner;
   const repo = repoName ?? meta?.name;
@@ -70,13 +71,23 @@ const FileViewer = ({ citation, onClose, repoOwner, repoName, githubToken }: Fil
       path: citation.filePath,
       githubToken: token || undefined,
     })
-      .then((res) => {
+      .then((res: any) => {
         if (cancelled) return;
-        upsertFileContent({ path: res.path, content: res.content, size: res.size });
+        if (res.error) {
+          setLoadError(res.error);
+        } else {
+          upsertFileContent({ path: res.path, content: res.content, size: res.size });
+        }
       })
       .catch((e) => {
         if (cancelled) return;
-        setLoadError(e instanceof Error ? e.message : "Failed to load file");
+        const msg = e instanceof Error ? e.message : "Failed to load file";
+        // Make edge function errors more user-friendly
+        if (msg.includes("non-2xx")) {
+          setLoadError("File fetch service unavailable. The edge function may need to be redeployed.");
+        } else {
+          setLoadError(msg);
+        }
       })
       .finally(() => {
         if (cancelled) return;
@@ -86,16 +97,21 @@ const FileViewer = ({ citation, onClose, repoOwner, repoName, githubToken }: Fil
     return () => {
       cancelled = true;
     };
-  }, [citation?.filePath, fileData?.content, owner, repo, token, upsertFileContent]);
+  }, [citation?.filePath, fileData?.content, owner, repo, token, upsertFileContent, retryCount]);
+
+  const handleRetry = () => {
+    setLoadError(null);
+    setRetryCount(c => c + 1);
+  };
 
   if (!citation) return null;
 
   const content =
     fileData?.content ||
     (isLoading
-      ? `// Loading file: ${citation.filePath}`
+      ? `// ⏳ Fetching file on-demand: ${citation.filePath}\n// This file was not included in the initial index.\n// Loading from GitHub API...`
       : loadError
-        ? `// ${loadError}`
+        ? `// ❌ Failed to load: ${citation.filePath}\n// Error: ${loadError}\n//\n// Click "Retry" in the header to try again.`
         : `// File content not available for: ${citation.filePath}`);
 
   const language = detectLanguage(citation.filePath);
@@ -110,7 +126,11 @@ const FileViewer = ({ citation, onClose, repoOwner, repoName, githubToken }: Fil
           <FileCode className="h-3 w-3 text-muted-foreground shrink-0" />
           <span className="text-[11px] text-foreground truncate">{citation.filePath}</span>
           {isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />}
-          {loadError && <span className="text-[10px] text-destructive shrink-0">Load failed</span>}
+          {loadError && (
+            <button onClick={handleRetry} className="text-[10px] text-destructive shrink-0 hover:underline cursor-pointer">
+              Failed — Retry
+            </button>
+          )}
           {shouldHighlight && (
             <span className="text-[10px] text-primary shrink-0">
               L{citation.startLine}–{citation.endLine}

@@ -24,6 +24,17 @@ export interface IndexedRepo {
   fileContents: { path: string; content: string; size: number }[];
   repoContext: string;
   totalFiles: number;
+  // On-demand mode fields
+  indexMode: "full" | "on-demand";
+  totalSourceFiles: number;
+  skeletonFilesFetched: number;
+  unfetchedFiles: { path: string; size: number }[];
+}
+
+export interface BatchFetchResult {
+  files: { path: string; content: string; size: number; error?: string }[];
+  fetched: number;
+  errors: number;
 }
 
 export interface OverviewData {
@@ -199,33 +210,53 @@ export class CodebaseGPTClient {
     githubToken?: string
   ): Promise<GitHubIssue[]> {
     try {
-      const { data, error } = await this.supabase.functions.invoke("repo-issues", {
-        body: { owner, repo, state, githubToken },
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github.v3+json",
+      };
+      if (githubToken) {
+        headers.Authorization = `Bearer ${githubToken}`;
+      }
+
+      const params = new URLSearchParams({
+        state: state,
+        per_page: "30",
+        sort: "updated",
+        direction: "desc",
       });
 
-      if (error) {
-        // Translate Supabase edge function errors into user-friendly messages
-        const msg = error.message || "";
-        if (msg.includes("non-2xx") || msg.includes("edge function")) {
-          throw new Error(
-            `Could not fetch issues for ${owner}/${repo}. The repository may be private or temporarily unavailable.${!githubToken ? " Try adding a GitHub Personal Access Token for private repos." : ""}`
-          );
-        }
-        throw new Error(`Failed to fetch issues: ${msg}`);
-      }
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/issues?${params}`,
+        { headers }
+      );
 
-      if (data?.error) {
-        // GitHub API-level error forwarded by the edge function
-        if (data.error.includes("404") || data.error.includes("Not Found")) {
+      if (!res.ok) {
+        if (res.status === 404) {
           throw new Error(`Repository ${owner}/${repo} not found. Check the repo name or add a GitHub token for private repos.`);
         }
-        if (data.error.includes("403") || data.error.includes("rate limit")) {
+        if (res.status === 403) {
           throw new Error("GitHub API rate limit reached. Add a GitHub Personal Access Token to increase your limit.");
         }
-        throw new Error(data.error);
+        throw new Error(`GitHub API error: ${res.status}`);
       }
 
-      return data.issues || [];
+      const issues = await res.json();
+      
+      const filtered = issues
+        .filter((i: any) => !i.pull_request)
+        .map((i: any) => ({
+          number: i.number,
+          title: i.title,
+          body: (i.body || "").slice(0, 2000),
+          state: i.state,
+          labels: i.labels.map((l: any) => ({ name: l.name, color: l.color })),
+          user: { login: i.user.login, avatar_url: i.user.avatar_url },
+          comments: i.comments,
+          created_at: i.created_at,
+          updated_at: i.updated_at,
+          html_url: i.html_url,
+        }));
+
+      return filtered;
     } catch (e) {
       if (e instanceof Error) throw e;
       throw new Error("Something went wrong while fetching issues. Please try again.");
@@ -238,13 +269,58 @@ export class CodebaseGPTClient {
     path: string;
     githubToken?: string;
   }): Promise<RepoFileContent> {
-    const { data, error } = await this.supabase.functions.invoke("repo-file", {
-      body: params,
+    const url = `${this.supabaseUrl}/functions/v1/repo-file`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.supabaseKey}`
+      },
+      body: JSON.stringify(params),
     });
 
-    if (error) throw new Error(error.message || "Failed to fetch file content");
-    if (data?.error) throw new Error(data.error);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}: ${errText || res.statusText}`);
+    }
+
+    const data = await res.json();
+    if (data?.error) {
+      throw new Error(data.error);
+    }
     return data as RepoFileContent;
+  }
+
+  /**
+   * Fetch multiple files in a single batch request (for on-demand mode).
+   * Max 10 files per batch.
+   */
+  async fetchFileBatch(params: {
+    owner: string;
+    repo: string;
+    paths: string[];
+    githubToken?: string;
+  }): Promise<BatchFetchResult> {
+    const url = `${this.supabaseUrl}/functions/v1/repo-fetch-batch`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.supabaseKey}`
+      },
+      body: JSON.stringify(params),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}: ${errText || res.statusText}`);
+    }
+
+    const data = await res.json();
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+    return data as BatchFetchResult;
   }
 
   async generateOnboardingDoc(repoContext: string): Promise<string> {

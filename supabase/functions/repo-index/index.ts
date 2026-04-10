@@ -19,6 +19,59 @@ const EXCLUDED_DIRS = new Set([
   ".cache", "coverage", ".turbo", ".vercel", "vendor", "target",
 ]);
 
+// On-demand mode: repos with more source files than this threshold
+// will only fetch skeleton files upfront; remaining files are lazy-loaded.
+const FULL_INDEX_LIMIT = 300;
+
+// Files that are always fetched in on-demand mode (config/doc files)
+const SKELETON_FILE_NAMES = new Set([
+  "README.md", "readme.md", "README.rst",
+  "package.json", "package-lock.json",
+  "tsconfig.json", "tsconfig.app.json", "tsconfig.node.json",
+  "Cargo.toml", "Cargo.lock",
+  "go.mod", "go.sum",
+  "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile",
+  "Gemfile", "Gemfile.lock",
+  "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+  "Makefile", "CMakeLists.txt",
+  ".env.example", ".env.sample",
+  "vite.config.ts", "vite.config.js",
+  "next.config.js", "next.config.ts", "next.config.mjs",
+  "webpack.config.js", "rollup.config.js",
+  "tailwind.config.ts", "tailwind.config.js",
+  "postcss.config.js", "postcss.config.cjs",
+  ".eslintrc.js", ".eslintrc.json", "eslint.config.js",
+  ".prettierrc", ".prettierrc.json",
+  "jest.config.js", "jest.config.ts", "vitest.config.ts",
+  "prisma/schema.prisma",
+]);
+
+/**
+ * Determines if a file should be included in skeleton-only indexing.
+ * Includes: config files, root-level source files, and top-level README/docs.
+ */
+function isSkeletonFile(filePath: string): boolean {
+  const parts = filePath.split("/");
+  const fileName = parts[parts.length - 1];
+
+  // Always include known config/doc files
+  if (SKELETON_FILE_NAMES.has(fileName)) return true;
+  if (SKELETON_FILE_NAMES.has(filePath)) return true;
+
+  // Include root-level source files (depth 1)
+  if (parts.length === 1) return true;
+
+  // Include files in top-level src/, lib/, app/ directories (depth 2 only)
+  if (parts.length === 2) {
+    const topDir = parts[0].toLowerCase();
+    if (["src", "lib", "app", "pages", "api", "routes", "cmd", "pkg", "internal"].includes(topDir)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function shouldIncludeFile(path: string): boolean {
   // Check excluded dirs
   const parts = path.split("/");
@@ -99,9 +152,26 @@ serve(async (req) => {
 
     // Filter source files
     const sourceFiles = (treeData.tree || [])
-      .filter((item: any) => item.type === "blob" && shouldIncludeFile(item.path))
-    // Step 3: Download file contents (low-concurrency ordered fetch to avoid rate limits)
-    const filesToFetch = sourceFiles.slice(0, 200);
+      .filter((item: any) => item.type === "blob" && shouldIncludeFile(item.path));
+
+    const totalSourceFiles = sourceFiles.length;
+    const isOnDemand = totalSourceFiles > FULL_INDEX_LIMIT;
+    const indexMode = isOnDemand ? "on-demand" : "full";
+
+    console.log(`Source files: ${totalSourceFiles}, indexMode: ${indexMode}`);
+
+    // Step 3: Determine which files to fetch
+    let filesToFetch: any[];
+    if (isOnDemand) {
+      // On-demand mode: only fetch skeleton/config files
+      filesToFetch = sourceFiles.filter((f: any) => isSkeletonFile(f.path));
+      console.log(`On-demand mode: fetching ${filesToFetch.length} skeleton files out of ${totalSourceFiles} total`);
+    } else {
+      // Full mode: fetch up to 200 files (existing behavior)
+      filesToFetch = sourceFiles.slice(0, 200);
+    }
+
+    // Step 4: Download file contents (low-concurrency ordered fetch to avoid rate limits)
     const fileContents: { path: string; content: string; size: number }[] = new Array(filesToFetch.length);
     const CONCURRENCY = 3;
 
@@ -162,13 +232,21 @@ serve(async (req) => {
     // Filter out any undefineds if some failed catastrophically
     const validContents = fileContents.filter(f => f !== undefined);
 
-    // Build file tree structure
+    // Build file tree structure (always include ALL source files for navigation)
     const fileTree = buildFileTree(sourceFiles.map((f: any) => f.path));
 
-    // Build context string for AI
+    // Build context string for AI (only from fetched files)
     const repoContext = validContents
       .map((f) => `--- ${f.path} ---\n${f.content}`)
       .join("\n\n");
+
+    // Build a list of unfetched file paths (for on-demand mode)
+    const fetchedPaths = new Set(filesToFetch.map((f: any) => f.path));
+    const unfetchedFiles = isOnDemand
+      ? sourceFiles
+        .filter((f: any) => !fetchedPaths.has(f.path))
+        .map((f: any) => ({ path: f.path, size: f.size || 0 }))
+      : [];
 
     return new Response(
       JSON.stringify({
@@ -180,14 +258,19 @@ serve(async (req) => {
           description: repoInfo.description || "",
           stars: repoInfo.stargazers_count,
           language: repoInfo.language || "Unknown",
-          fileCount: sourceFiles.length,
+          fileCount: totalSourceFiles,
           framework: "Detected",
-          complexity: sourceFiles.length > 1000 ? "Enterprise" : sourceFiles.length > 500 ? "High" : sourceFiles.length > 100 ? "Medium" : "Low",
+          complexity: totalSourceFiles > 1000 ? "Enterprise" : totalSourceFiles > 500 ? "High" : totalSourceFiles > 100 ? "Medium" : "Low",
         },
         fileTree,
         fileContents: validContents,
         repoContext,
-        totalFiles: sourceFiles.length,
+        totalFiles: totalSourceFiles,
+        // --- On-demand mode fields ---
+        indexMode,
+        totalSourceFiles,
+        skeletonFilesFetched: filesToFetch.length,
+        unfetchedFiles,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

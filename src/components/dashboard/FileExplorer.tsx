@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { ChevronRight, ChevronDown, Folder, FileCode, FileText, Search } from "lucide-react";
+import { ChevronRight, ChevronDown, Folder, FileCode, FileText, Search, Loader2, CloudDownload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FileTreeNode } from "@/lib/mock-data";
 import { useRepoStore } from "@/lib/store";
+import { fetchFileContent } from "@/lib/api";
 
 interface FileExplorerProps {
   tree: FileTreeNode[];
@@ -10,16 +11,43 @@ interface FileExplorerProps {
 
 const FileItem: React.FC<{ node: FileTreeNode; depth: number }> = ({ node, depth }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const { activeFilePath, openFile, setActiveFile } = useRepoStore();
+  const [isLoading, setIsLoading] = useState(false);
+  const { activeFilePath, openFile, setActiveFile, fileContents, meta, githubToken, indexMode, upsertFileContent } = useRepoStore();
   const isActive = activeFilePath === node.path;
 
-  const handleClick = (e: React.MouseEvent) => {
+  // Check if this file's content is already fetched
+  const hasContent = node.type === "file" && fileContents.some(f => f.path === node.path);
+  const isOnDemand = indexMode === "on-demand";
+  const needsFetch = node.type === "file" && isOnDemand && !hasContent;
+
+  const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (node.type === "folder") {
       setIsOpen(!isOpen);
-    } else {
-      openFile(node.path);
-      setActiveFile(node.path);
+      return;
+    }
+    
+    openFile(node.path);
+    setActiveFile(node.path);
+
+    // Lazy-fetch the file if content is not available
+    if (needsFetch && meta?.owner && meta?.name && !isLoading) {
+      setIsLoading(true);
+      try {
+        const res = await fetchFileContent({
+          owner: meta.owner,
+          repo: meta.name,
+          path: node.path,
+          githubToken: githubToken || undefined,
+        });
+        if (res.content) {
+          upsertFileContent({ path: res.path, content: res.content, size: res.size });
+        }
+      } catch (err) {
+        console.error(`Failed to lazy-fetch ${node.path}:`, err);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -41,6 +69,14 @@ const FileItem: React.FC<{ node: FileTreeNode; depth: number }> = ({ node, depth
       >
         {node.type === "folder" ? (
           <Icon className="h-3.5 w-3.5 shrink-0" />
+        ) : isLoading ? (
+          <div className="w-3.5 h-3.5 flex items-center justify-center">
+            <Loader2 className="w-3 h-3 animate-spin text-primary" />
+          </div>
+        ) : needsFetch ? (
+          <div className="w-3.5 h-3.5 flex items-center justify-center">
+            <CloudDownload className="w-3 h-3 text-amber-500/60 group-hover:text-amber-500" />
+          </div>
         ) : (
           <div className="w-3.5 h-3.5 flex items-center justify-center">
             <div className={cn("w-1 h-1 rounded-full", isActive ? "bg-primary" : "bg-muted-foreground/40")} />
@@ -50,7 +86,8 @@ const FileItem: React.FC<{ node: FileTreeNode; depth: number }> = ({ node, depth
         {node.type === "folder" && <Folder className="h-3.5 w-3.5 text-indigo-400/60 group-hover:text-indigo-400 transition-colors" />}
         <span className={cn(
           "text-[11px] font-medium tracking-tight truncate",
-          isActive ? "font-bold" : ""
+          isActive ? "font-bold" : "",
+          needsFetch && !isLoading ? "text-muted-foreground/70" : ""
         )}>
           {node.name}
         </span>
@@ -64,7 +101,7 @@ const FileItem: React.FC<{ node: FileTreeNode; depth: number }> = ({ node, depth
         </div>
       )}
     </div>
-  );
+  )
 };
 
 const FileExplorer: React.FC<FileExplorerProps> = ({ tree }) => {
