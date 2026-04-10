@@ -1,0 +1,49 @@
+import {getInput, warning} from '@actions/core'
+import {Octokit} from '@octokit/action'
+import {retry} from '@octokit/plugin-retry'
+import {throttling} from '@octokit/plugin-throttling'
+
+export function getActionOctokit() {
+  const token = getInput('token') || process.env.GITHUB_TOKEN
+  if (!token) return null
+
+  const RetryAndThrottlingOctokit = Octokit.plugin(
+    throttling as any,
+    retry as any
+  )
+
+  return new RetryAndThrottlingOctokit({
+    auth: `token ${token}`,
+    throttle: {
+      onRateLimit: (
+        retryAfter: number,
+        options: any,
+        _o: any,
+        retryCount: number
+      ) => {
+        warning(
+          `Request quota exhausted for request ${options.method} ${options.url}
+Retry after: ${retryAfter} seconds
+Retry count: ${retryCount}
+`
+        )
+        if (retryCount <= 3) {
+          warning(`Retrying after ${retryAfter} seconds!`)
+          return true
+        }
+      },
+      onSecondaryRateLimit: (retryAfter: number, options: any) => {
+        warning(
+          `SecondaryRateLimit detected for request ${options.method} ${options.url} ; retry after ${retryAfter} seconds`
+        )
+        if (
+          options.method === 'POST' &&
+          options.url.match(/\/repos\/.*\/.*\/pulls\/.*\/reviews/)
+        ) {
+          return false
+        }
+        return true
+      }
+    }
+  })
+}
