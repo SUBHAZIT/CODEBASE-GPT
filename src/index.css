@@ -1,0 +1,226 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root,
+  .dark {
+    --background: 220 40% 2%;
+    --foreground: 210 20% 98%;
+
+    --card: 220 13% 12%;
+    --card-foreground: 220 10% 88%;
+
+    --popover: 220 13% 13%;
+    --popover-foreground: 220 10% 88%;
+
+    --primary: 210 60% 55%;
+    --primary-foreground: 220 14% 10%;
+
+    --secondary: 220 12% 16%;
+    --secondary-foreground: 220 10% 72%;
+
+    --muted: 220 10% 15%;
+    --muted-foreground: 220 8% 48%;
+
+    --accent: 210 40% 22%;
+    --accent-foreground: 220 10% 88%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 220 10% 18%;
+    --input: 220 10% 18%;
+    --ring: 210 60% 55%;
+
+    --radius: 0.375rem;
+
+    --sidebar-background: 220 13% 11%;
+    --sidebar-foreground: 220 10% 72%;
+    --sidebar-primary: 210 60% 55%;
+    --sidebar-primary-foreground: 220 14% 10%;
+    --sidebar-accent: 220 10% 15%;
+    --sidebar-accent-foreground: 220 10% 80%;
+    --sidebar-border: 220 10% 18%;
+    --sidebar-ring: 210 60% 55%;
+
+    /* Semantic tokens */
+    --surface-elevated: 220 12% 13%;
+    --surface-glass: 220 12% 12%;
+    --code-bg: 220 14% 9%;
+    --success: 142 50% 42%;
+    --warning: 38 70% 50%;
+    --info: 210 70% 55%;
+    --glow: 210 60% 55%;
+  }
+
+  .light {
+    --background: 0 0% 98%;
+    --foreground: 220 14% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 14% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 14% 10%;
+
+    --primary: 210 60% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 10% 94%;
+    --secondary-foreground: 220 10% 38%;
+
+    --muted: 220 10% 94%;
+    --muted-foreground: 220 8% 46%;
+
+    --accent: 210 30% 92%;
+    --accent-foreground: 220 14% 10%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 220 10% 88%;
+    --input: 220 10% 88%;
+    --ring: 210 60% 45%;
+
+    --radius: 0.375rem;
+
+    --sidebar-background: 0 0% 97%;
+    --sidebar-foreground: 220 10% 38%;
+    --sidebar-primary: 210 60% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 10% 94%;
+    --sidebar-accent-foreground: 220 10% 38%;
+    --sidebar-border: 220 10% 88%;
+    --sidebar-ring: 210 60% 45%;
+
+    --surface-elevated: 0 0% 100%;
+    --surface-glass: 0 0% 99%;
+    --code-bg: 220 10% 95%;
+    --success: 142 50% 38%;
+    --warning: 38 70% 45%;
+    --info: 210 70% 50%;
+    --glow: 210 60% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.2);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.35);
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--primary)), hsl(210, 80%, 68%));
+  }
+
+  .animate-shimmer {
+    background-size: 200% auto;
+    animation: shimmer 2s linear infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% center; }
+    100% { background-position: 200% center; }
+  }
+
+  .glass-panel {
+    @apply bg-background/60 backdrop-blur-xl border border-white/10 shadow-2xl;
+  }
+
+  .font-serif {
+    font-family: Georgia, serif;
+    letter-spacing: -0.01em;
+  }
+
+  .grid-line-h {
+    @apply absolute left-0 right-0 h-px bg-white/5;
+  }
+
+  .grid-line-v {
+    @apply absolute top-0 bottom-0 w-px bg-white/5;
+  }
+
+  :root,
+  .dark {
+    --background: 220 40% 2%;
+    --foreground: 210 20% 98%;
+    /* ... other variables ... */
+  }
+
+  /* Blueprint Grid */
+  .blueprint-grid {
+    background-image: 
+      linear-gradient(to right, rgba(20, 184, 166, 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(20, 184, 166, 0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(circle at center, black, transparent 90%);
+  }
+
+  .teal-glow {
+    @apply absolute pointer-events-none blur-[120px] opacity-20 rounded-full z-0;
+    background: radial-gradient(circle at center, rgb(20, 184, 166), transparent 70%);
+  }
+
+  /* Enhanced Corner Brackets with Diagonal Guides */
+  .corner-frame {
+    @apply absolute w-14 h-14 pointer-events-none z-20;
+  }
+  
+  .corner-frame::before {
+    content: '';
+    @apply absolute w-full h-full;
+    border: 1px solid rgba(20, 184, 166, 0.15);
+  }
+
+  .corner-frame::after {
+    content: '';
+    @apply absolute w-4 h-4;
+    border: 2px solid rgba(20, 184, 166, 0.6);
+    filter: drop-shadow(0 0 4px rgba(20, 184, 166, 0.4));
+  }
+
+  .corner-frame-tl { @apply top-0 left-0; }
+  .corner-frame-tl::after { @apply top-0 left-0 border-r-0 border-b-0; }
+  .corner-frame-tl::before { @apply border-r-0 border-b-0; }
+
+  .corner-frame-tr { @apply top-0 right-0; }
+  .corner-frame-tr::after { @apply top-0 right-0 border-l-0 border-b-0; }
+  .corner-frame-tr::before { @apply border-l-0 border-b-0; }
+
+  .corner-frame-bl { @apply bottom-0 left-0; }
+  .corner-frame-bl::after { @apply bottom-0 left-0 border-r-0 border-t-0; }
+  .corner-frame-bl::before { @apply border-r-0 border-t-0; }
+
+  .corner-frame-br { @apply bottom-0 right-0; }
+  .corner-frame-br::after { @apply bottom-0 right-0 border-l-0 border-t-0; }
+  .corner-frame-br::before { @apply border-l-0 border-t-0; }
+
+  .diagonal-line {
+    @apply absolute w-px bg-gradient-to-b from-transparent via-teal-500/10 to-transparent pointer-events-none;
+  }
+}

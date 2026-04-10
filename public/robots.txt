@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /index/
+Disallow: /repo/*/chat
+Disallow: /shared/
+
+Sitemap: https://codebasegpt.in/sitemap.xml

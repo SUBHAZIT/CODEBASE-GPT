@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Primary Project",
+    "apiKeyEnv": "SUPABASE_ANON_KEY",
+    "endpoints": [
+      {
+        "name": "REST API",
+        "url": "https://<your-project-id>.supabase.co/rest/v1/"
+      },
+      {
+        "name": "Health Check Function",
+        "url": "https://<your-project-id>.supabase.co/functions/v1/health-check",
+        "method": "GET"
+      }
+    ]
+  }
+]

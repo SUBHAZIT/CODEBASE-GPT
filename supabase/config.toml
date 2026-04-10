@@ -1,0 +1,13 @@
+project_id = "rdjdudvdvaxodvuxaqrt"
+
+[functions.chat]
+verify_jwt = false
+
+[functions.repo-index]
+verify_jwt = false
+
+[functions.track-visit]
+verify_jwt = false
+
+[functions.stats]
+verify_jwt = false

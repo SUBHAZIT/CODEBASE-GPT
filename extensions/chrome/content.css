@@ -1,0 +1,11 @@
+/* Styles for injected elements on GitHub */
+#innofusion-index-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.2);
+  background: #ffffff !important;
+  color: #000000 !important;
+}
+
+#innofusion-index-btn:active {
+  transform: translateY(0);
+}
