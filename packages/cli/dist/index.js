@@ -5,7 +5,13 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
 import { CodebaseGPTClient } from "@codebasegpt/sdk";
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+dotenv.config();
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../.env"), override: true });
 var program = new Command();
 var getClient = () => {
   const supabaseUrl = process.env.CODEBASEGPT_SUPABASE_URL || "";
@@ -26,8 +32,8 @@ var getClient = () => {
 program.name("codebasegpt").description("Official CLI for CodebaseGPT").version("0.1.0");
 program.command("init").description("Initialize CodebaseGPT configuration").action(async () => {
   const fs = await import("fs");
-  const path = await import("path");
-  const envPath = path.join(process.cwd(), ".env");
+  const path2 = await import("path");
+  const envPath = path2.join(process.cwd(), ".env");
   if (fs.existsSync(envPath)) {
     console.log(chalk.yellow("Note: .env file already exists."));
   } else {
@@ -52,6 +58,16 @@ program.command("index").description("Index a GitHub repository").argument("<url
     spinner.succeed(chalk.green(`Successfully indexed ${repo.meta.owner}/${repo.meta.name}`));
     console.log(chalk.blue(`Repo ID: ${repo.repoId}`));
     console.log(chalk.blue(`Total Files: ${repo.totalFiles}`));
+    const { default: open } = await import("open");
+    const dashboardUrl = process.env.CODEBASEGPT_DASHBOARD_URL || "http://localhost:8080";
+    const dashUrl = `${dashboardUrl}/repo/${repo.repoId}`;
+    console.log(chalk.blue(`
+Opening dashboard: ${dashUrl}`));
+    try {
+      await open(dashUrl);
+    } catch {
+      console.log(chalk.yellow(`Could not open browser automatically. Please visit: ${dashUrl}`));
+    }
   } catch (error) {
     spinner.fail(chalk.red(`Failed to index repository: ${error.message}`));
   }
@@ -89,8 +105,8 @@ ${i + 1}. ${chalk.bold(f.title)} [${chalk.yellow(f.severity.toUpperCase())}]`);
 });
 program.command("open").description("Open the repository dashboard in your browser").argument("<repoId>", "Repository ID (e.g. gh-owner-repo-id)").action(async (repoId) => {
   const { default: open } = await import("open");
-  const dotenv = await import("dotenv");
-  dotenv.config();
+  const dotenv2 = await import("dotenv");
+  dotenv2.config();
   const dashboardUrl = process.env.CODEBASEGPT_DASHBOARD_URL || "http://localhost:8080";
   const url = `${dashboardUrl}/repo/${repoId}`;
   console.log(chalk.blue(`Opening dashboard: ${url}`));

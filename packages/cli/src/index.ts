@@ -3,7 +3,15 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
 import { CodebaseGPTClient } from "@codebasegpt/sdk";
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// Load .env from CWD first, then override with CLI package's own .env
+dotenv.config(); // loads from CWD
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../.env"), override: true });
 
 const program = new Command();
 
@@ -70,6 +78,17 @@ program
       spinner.succeed(chalk.green(`Successfully indexed ${repo.meta.owner}/${repo.meta.name}`));
       console.log(chalk.blue(`Repo ID: ${repo.repoId}`));
       console.log(chalk.blue(`Total Files: ${repo.totalFiles}`));
+
+      // Auto-open the dashboard after successful indexing
+      const { default: open } = await import("open");
+      const dashboardUrl = process.env.CODEBASEGPT_DASHBOARD_URL || "http://localhost:8080";
+      const dashUrl = `${dashboardUrl}/repo/${repo.repoId}`;
+      console.log(chalk.blue(`\nOpening dashboard: ${dashUrl}`));
+      try {
+        await open(dashUrl);
+      } catch {
+        console.log(chalk.yellow(`Could not open browser automatically. Please visit: ${dashUrl}`));
+      }
     } catch (error: any) {
       spinner.fail(chalk.red(`Failed to index repository: ${error.message}`));
     }
