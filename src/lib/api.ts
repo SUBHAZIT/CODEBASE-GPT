@@ -9,7 +9,7 @@ const client = new CodebaseGPTClient({
   supabaseKey: SUPABASE_KEY,
 });
 
-export type { IndexedRepo, SecurityFinding, GitHubIssue, RepoFileContent, BatchFetchResult } from "../../packages/sdk/src/index";
+export type { IndexedRepo, SecurityFinding, GitHubIssue, GitHubPullRequest, GitHubCommit, RepoFileContent, BatchFetchResult } from "../../packages/sdk/src/index";
 
 export async function indexRepository(
   githubUrl: string,
@@ -38,6 +38,32 @@ export async function fetchIssues(
   githubToken?: string
 ) {
   return client.fetchIssues(owner, repo, state, githubToken);
+}
+
+export async function fetchPullRequests(
+  owner: string,
+  repo: string,
+  state: "open" | "closed" | "all" = "open",
+  githubToken?: string
+) {
+  return client.fetchPullRequests(owner, repo, state, githubToken);
+}
+
+export async function fetchCommits(
+  owner: string,
+  repo: string,
+  githubToken?: string
+) {
+  return client.fetchCommits(owner, repo, githubToken);
+}
+
+export async function fetchPullRequestDiff(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  githubToken?: string
+) {
+  return client.fetchPullRequestDiff(owner, repo, prNumber, githubToken);
 }
 
 export async function fetchFileContent(params: {
