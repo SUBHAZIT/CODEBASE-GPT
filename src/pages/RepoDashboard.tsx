@@ -4,7 +4,7 @@ import {
   MessageSquare, FileCode, ChevronLeft, Code2,
   Layers, Package, AlertTriangle, BookOpen, Network, Shield, LayoutDashboard, CircleDot,
   Sparkles, FolderOpen, Settings, ArrowUpRight, LogIn, Info, Database, GitBranch,
-  User, Terminal, Loader2
+  User, Terminal, Loader2, GitCommit, FileDiff
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DEMO_REPOS, DEMO_FILE_TREE } from "@/lib/mock-data";
@@ -230,7 +230,8 @@ const RepoDashboard = () => {
 
   const navItems = [
     { label: "Issues", icon: CircleDot, path: `/repo/${repoId}/issues` },
-    { label: "PR Reviews", icon: Sparkles, path: `https://github.com/marketplace/actions/prgpt-ai-based-pr-reviewer-summarizer` },
+    { label: "Pull Requests", icon: FileDiff, path: `/repo/${repoId}/prs` },
+    { label: "Commits", icon: GitCommit, path: `/repo/${repoId}/commits` },
     { label: "Onboarding", icon: BookOpen, path: `/repo/${repoId}/onboarding` },
     { label: "Security", icon: Shield, path: `/repo/${repoId}/security` },
     { label: "System Design", icon: LayoutDashboard, path: `/repo/${repoId}/system-design` },
@@ -488,16 +489,16 @@ const RepoDashboard = () => {
                     variant="outline"
                     size="sm"
                     onClick={() => window.open('https://github.com/marketplace/actions/prgpt-ai-based-pr-reviewer-summarizer', '_blank')}
-                    className="h-9 px-4 text-[10px] font-black uppercase tracking-wider border-teal-500/30 text-teal-500 hover:bg-teal-500/10"
+                    className="h-9 px-4 text-[10px] font-black uppercase tracking-wider border-teal-500/30 text-teal-500 hover:bg-teal-500/10 hidden md:flex"
                   >
-                    Setup Action
+                    Setup Github Action
                   </Button>
                   <Button
                     size="sm"
-                    onClick={() => window.open('https://github.com/marketplace/actions/prgpt-ai-based-pr-reviewer-summarizer', '_blank')}
+                    onClick={() => navigate(`/repo/${repoId}/prs`)}
                     className="h-9 px-4 text-[10px] font-black uppercase tracking-wider bg-teal-500 text-black hover:bg-teal-400"
                   >
-                    View on GitHub <ArrowUpRight className="ml-1 h-3 w-3" />
+                    Open PR Dashboard <ArrowUpRight className="ml-1 h-3 w-3" />
                   </Button>
                 </div>
               </div>

@@ -14,6 +14,8 @@ import SharedChat from "./pages/SharedChat";
 import SecurityScan from "./pages/SecurityScan";
 import SystemDesign from "./pages/SystemDesign";
 import RepoIssues from "./pages/RepoIssues";
+import RepoPRs from "./pages/RepoPRs";
+import RepoCommits from "./pages/RepoCommits";
 import Features from "./pages/Features";
 import HowItWorks from "./pages/HowItWorks";
 import FAQ from "./pages/FAQ";
@@ -50,6 +52,8 @@ const App = () => {
               <Route path="/repo/:repoId/security" element={<SecurityScan />} />
               <Route path="/repo/:repoId/system-design" element={<SystemDesign />} />
               <Route path="/repo/:repoId/issues" element={<RepoIssues />} />
+              <Route path="/repo/:repoId/prs" element={<RepoPRs />} />
+              <Route path="/repo/:repoId/commits" element={<RepoCommits />} />
               <Route path="/shared/:sessionId" element={<SharedChat />} />
               <Route path="/features" element={<Features />} />
               <Route path="/how-it-works" element={<HowItWorks />} />

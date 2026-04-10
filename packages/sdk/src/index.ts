@@ -71,6 +71,29 @@ export interface GitHubIssue {
   html_url: string;
 }
 
+export interface GitHubPullRequest {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  user: { login: string; avatar_url: string };
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  draft: boolean;
+  merged_at: string | null;
+}
+
+export interface GitHubCommit {
+  sha: string;
+  commit: {
+    message: string;
+    author: { name: string; date: string };
+  };
+  author: { login: string; avatar_url: string } | null;
+  html_url: string;
+}
+
 export interface RepoFileContent {
   path: string;
   content: string;
@@ -260,6 +283,123 @@ export class CodebaseGPTClient {
     } catch (e) {
       if (e instanceof Error) throw e;
       throw new Error("Something went wrong while fetching issues. Please try again.");
+    }
+  }
+
+  async fetchPullRequests(
+    owner: string,
+    repo: string,
+    state: "open" | "closed" | "all" = "open",
+    githubToken?: string
+  ): Promise<GitHubPullRequest[]> {
+    try {
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github.v3+json",
+      };
+      if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+
+      const params = new URLSearchParams({
+        state: state,
+        per_page: "30",
+        sort: "updated",
+        direction: "desc",
+      });
+
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/pulls?${params}`,
+        { headers }
+      );
+
+      if (!res.ok) {
+        if (res.status === 404) throw new Error(`Repository ${owner}/${repo} not found.`);
+        if (res.status === 403) throw new Error("GitHub API rate limit reached.");
+        throw new Error(`GitHub API error: ${res.status}`);
+      }
+
+      const pulls = await res.json();
+      return pulls.map((p: any) => ({
+        number: p.number,
+        title: p.title,
+        body: (p.body || "").slice(0, 2000),
+        state: p.state,
+        user: { login: p.user.login, avatar_url: p.user.avatar_url },
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+        html_url: p.html_url,
+        draft: p.draft,
+        merged_at: p.merged_at,
+      }));
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      throw new Error("Something went wrong while fetching pull requests.");
+    }
+  }
+
+  async fetchCommits(
+    owner: string,
+    repo: string,
+    githubToken?: string
+  ): Promise<GitHubCommit[]> {
+    try {
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github.v3+json",
+      };
+      if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits?per_page=30`,
+        { headers }
+      );
+
+      if (!res.ok) {
+        if (res.status === 404) throw new Error(`Repository ${owner}/${repo} not found.`);
+        if (res.status === 403) throw new Error("GitHub API rate limit reached.");
+        throw new Error(`GitHub API error: ${res.status}`);
+      }
+
+      const commits = await res.json();
+      return commits.map((c: any) => ({
+        sha: c.sha,
+        commit: {
+          message: c.commit.message,
+          author: { name: c.commit.author.name, date: c.commit.author.date },
+        },
+        author: c.author ? { login: c.author.login, avatar_url: c.author.avatar_url } : null,
+        html_url: c.html_url,
+      }));
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      throw new Error("Something went wrong while fetching commits.");
+    }
+  }
+
+  async fetchPullRequestDiff(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    githubToken?: string
+  ): Promise<string> {
+    try {
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github.v3.diff",
+      };
+      if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
+        { headers }
+      );
+
+      if (!res.ok) {
+        if (res.status === 404) throw new Error(`Pull Request #${prNumber} not found.`);
+        if (res.status === 403) throw new Error("GitHub API rate limit reached.");
+        throw new Error(`GitHub API error: ${res.status}`);
+      }
+
+      return await res.text();
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      throw new Error("Something went wrong while fetching PR diff.");
     }
   }
 
