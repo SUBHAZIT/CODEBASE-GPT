@@ -24,6 +24,23 @@ interface IndexedRepo {
     }[];
     repoContext: string;
     totalFiles: number;
+    indexMode: "full" | "on-demand";
+    totalSourceFiles: number;
+    skeletonFilesFetched: number;
+    unfetchedFiles: {
+        path: string;
+        size: number;
+    }[];
+}
+interface BatchFetchResult {
+    files: {
+        path: string;
+        content: string;
+        size: number;
+        error?: string;
+    }[];
+    fetched: number;
+    errors: number;
 }
 interface OverviewData {
     narrative: string;
@@ -88,6 +105,16 @@ declare class CodebaseGPTClient {
         path: string;
         githubToken?: string;
     }): Promise<RepoFileContent>;
+    /**
+     * Fetch multiple files in a single batch request (for on-demand mode).
+     * Max 10 files per batch.
+     */
+    fetchFileBatch(params: {
+        owner: string;
+        repo: string;
+        paths: string[];
+        githubToken?: string;
+    }): Promise<BatchFetchResult>;
     generateOnboardingDoc(repoContext: string): Promise<string>;
     streamChat({ messages, repoContext, onDelta, onDone, onError, }: {
         messages: {
@@ -101,4 +128,4 @@ declare class CodebaseGPTClient {
     }): Promise<void>;
 }
 
-export { CodebaseGPTClient, type CodebaseGPTConfig, type FileTreeNode, type GitHubIssue, type IndexedRepo, type OverviewData, type RepoFileContent, type RepoMeta, type SecurityFinding };
+export { type BatchFetchResult, CodebaseGPTClient, type CodebaseGPTConfig, type FileTreeNode, type GitHubIssue, type IndexedRepo, type OverviewData, type RepoFileContent, type RepoMeta, type SecurityFinding };

@@ -2,14 +2,14 @@ import { CodebaseGPTClient } from "../../packages/sdk/src/index";
 import type { FileTreeNode, ChatMessage, OverviewData, RepoMeta } from "@/lib/mock-data";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 const client = new CodebaseGPTClient({
   supabaseUrl: SUPABASE_URL,
   supabaseKey: SUPABASE_KEY,
 });
 
-export type { IndexedRepo, SecurityFinding, GitHubIssue, RepoFileContent } from "../../packages/sdk/src/index";
+export type { IndexedRepo, SecurityFinding, GitHubIssue, RepoFileContent, BatchFetchResult } from "../../packages/sdk/src/index";
 
 export async function indexRepository(
   githubUrl: string,
@@ -47,6 +47,15 @@ export async function fetchFileContent(params: {
   githubToken?: string;
 }) {
   return client.fetchFileContent(params);
+}
+
+export async function fetchFileBatch(params: {
+  owner: string;
+  repo: string;
+  paths: string[];
+  githubToken?: string;
+}) {
+  return client.fetchFileBatch(params);
 }
 
 export async function generateOnboardingDoc(repoContext: string) {

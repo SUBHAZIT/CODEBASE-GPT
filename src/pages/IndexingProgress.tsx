@@ -9,10 +9,17 @@ import { useUserAuth } from "@/hooks/use-user-auth";
 import { toast } from "@/hooks/use-toast";
 import { useSettingsStore } from "@/lib/settings-store";
 
-const STAGES = [
+const STAGES_FULL = [
   { label: "Fetching file tree", icon: GitBranch },
   { label: "Downloading files", icon: Download },
   { label: "Analyzing & chunking", icon: Cpu },
+  { label: "Generating overview", icon: Database },
+];
+
+const STAGES_ON_DEMAND = [
+  { label: "Fetching file tree", icon: GitBranch },
+  { label: "Downloading skeleton files", icon: Download },
+  { label: "Building on-demand index", icon: Cpu },
   { label: "Generating overview", icon: Database },
 ];
 
@@ -31,7 +38,10 @@ const IndexingProgress = () => {
   const [githubUrl, setGithubUrl] = useState("");
   const [githubToken, setGithubToken] = useState<string | undefined>();
   const [newToken, setNewToken] = useState("");
+  const [isOnDemand, setIsOnDemand] = useState(false);
   const started = useRef(false);
+
+  const STAGES = isOnDemand ? STAGES_ON_DEMAND : STAGES_FULL;
 
   useEffect(() => {
     const state = location.state as { githubUrl?: string; githubToken?: string } | null;
@@ -91,6 +101,10 @@ const IndexingProgress = () => {
         clearTimeout(stage2Timer);
         clearTimeout(stage3Timer);
 
+        // Detect on-demand mode
+        const onDemandMode = data.indexMode === "on-demand";
+        setIsOnDemand(onDemandMode);
+
         setFileCount(data.totalFiles);
         setCurrentStage(3);
 
@@ -101,6 +115,10 @@ const IndexingProgress = () => {
           fileContents: data.fileContents,
           repoContext: data.repoContext,
           githubToken,
+          // On-demand fields
+          indexMode: data.indexMode || "full",
+          totalSourceFiles: data.totalSourceFiles || data.totalFiles,
+          unfetchedFiles: data.unfetchedFiles || [],
         };
 
         setRepoData(repoData as any);
@@ -204,6 +222,18 @@ const IndexingProgress = () => {
           </div>
         </div>
 
+        {isOnDemand && currentStage >= 2 && (
+          <motion.div 
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4 p-3 rounded-xl border border-primary/20 bg-primary/5"
+          >
+            <p className="text-[11px] font-semibold text-primary mb-1">⚡ Large Repository Detected</p>
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              Indexing skeleton files only. {fileCount > 0 ? `${fileCount.toLocaleString()} files` : 'Remaining files'} available on-demand when you browse or ask the AI.
+            </p>
+          </motion.div>
+        )}
         {error && (
           <div className="p-4 rounded-2xl border border-destructive/20 bg-destructive/5 flex flex-col gap-3">
             <div className="flex items-start gap-2">

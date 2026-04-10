@@ -15,13 +15,13 @@ import { useCompactMode } from "@/hooks/use-compact-mode";
 import { useState, useEffect, useRef } from "react";
 import { openInStackBlitz } from "@/lib/webcontainer";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuLabel, 
-  DropdownMenuSeparator, 
-  DropdownMenuTrigger 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { useUserAuth } from "@/hooks/use-user-auth";
 import { LogOut, User as UserIcon, Settings as SettingsIcon } from "lucide-react";
@@ -46,7 +46,7 @@ const RepoDashboard = () => {
   const navigate = useNavigate();
   const compact = useCompactMode();
   const { user, logout } = useUserAuth();
-  const { meta: storeMeta, overview: storeOverview, fileTree: storeFileTree, fileContents: storeFileContents, setRepoData, setOverview } = useRepoStore();
+  const { meta: storeMeta, overview: storeOverview, fileTree: storeFileTree, fileContents: storeFileContents, indexMode: storeIndexMode, totalSourceFiles: storeTotalSourceFiles, unfetchedFiles: storeUnfetchedFiles, setRepoData, setOverview } = useRepoStore();
   const [graphExpanded, setGraphExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Loading repository data...");
@@ -60,7 +60,7 @@ const RepoDashboard = () => {
   // Auto-fetch repo data when store is empty (e.g. direct navigation via CLI)
   useEffect(() => {
     if (storeMeta || !repoId || fetchAttempted.current) return;
-    
+
     // Try localStorage cache first (keyed by repoId)
     const cached = localStorage.getItem(`repo_data_${repoId}`);
     if (cached) {
@@ -94,6 +94,9 @@ const RepoDashboard = () => {
           fileTree: data.fileTree,
           fileContents: data.fileContents,
           repoContext: data.repoContext,
+          indexMode: data.indexMode || "full",
+          totalSourceFiles: data.totalSourceFiles || data.totalFiles,
+          unfetchedFiles: data.unfetchedFiles || [],
         };
         setRepoData(repoData as any);
 
@@ -270,7 +273,7 @@ const RepoDashboard = () => {
           </div>
           <div className="flex items-center gap-3">
             {!compact && <CodebaseSearch repoId={repoId || repo.id} />}
-            
+
             {user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -305,8 +308,8 @@ const RepoDashboard = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <button 
-                onClick={() => navigate("/profile")} 
+              <button
+                onClick={() => navigate("/profile")}
                 className="h-8 w-8 rounded-full bg-muted flex items-center justify-center hover:bg-muted/80 transition-colors"
               >
                 <UserIcon className="h-4 w-4 text-muted-foreground" />
@@ -363,6 +366,32 @@ const RepoDashboard = () => {
               </div>
             ))}
           </div>
+
+          {/* On-Demand Mode Banner */}
+          {storeIndexMode === "on-demand" && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-4"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                  <span className="text-base">⚡</span>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-xs font-bold text-amber-400 mb-1 flex items-center gap-2">
+                    ON-DEMAND MODE
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    This is a large repository with <span className="text-foreground font-semibold">{(storeTotalSourceFiles || 0).toLocaleString()} source files</span>.
+                    Only skeleton files were indexed upfront — <span className="text-foreground font-semibold">{(storeUnfetchedFiles?.length || 0).toLocaleString()} files</span> are
+                    available on-demand when you browse or ask the AI.
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* Architecture + Key Files row */}
           <div className="grid lg:grid-cols-[1fr_320px] gap-4 mb-4">
@@ -437,42 +466,42 @@ const RepoDashboard = () => {
 
           {/* PRGPT Integration Row */}
           <div className="grid lg:grid-cols-1 gap-4 mb-4">
-             <div className="rounded-xl border border-teal-500/20 bg-teal-500/[0.02] p-6 relative overflow-hidden group">
-               <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                 <Sparkles className="h-24 w-24 text-teal-500" />
-               </div>
-               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
-                 <div className="flex items-center gap-4">
-                   <div className="w-12 h-12 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center">
-                     <img src="/prgpt_logo.png" alt="PRGPT" className="w-8 h-8 object-contain" />
-                   </div>
-                   <div>
-                     <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                       PRGPT - AI PR REVIEWER
-                       <span className="px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20 text-[8px] text-teal-500 font-black uppercase tracking-tighter">GEMINI POWERED</span>
-                     </h3>
-                     <p className="text-xs text-muted-foreground italic">Automated reviews, summarization, and interactive PR chat.</p>
-                   </div>
-                 </div>
-                 <div className="flex items-center gap-3">
-                   <Button 
-                     variant="outline" 
-                     size="sm"
-                     onClick={() => window.open('https://github.com/marketplace/actions/prgpt-ai-based-pr-reviewer-summarizer', '_blank')}
-                     className="h-9 px-4 text-[10px] font-black uppercase tracking-wider border-teal-500/30 text-teal-500 hover:bg-teal-500/10"
-                   >
-                     Setup Action
-                   </Button>
-                   <Button 
-                     size="sm"
-                     onClick={() => window.open('https://github.com/SUBHAZIT/PRGPT', '_blank')}
-                     className="h-9 px-4 text-[10px] font-black uppercase tracking-wider bg-teal-500 text-black hover:bg-teal-400"
-                   >
-                     View on GitHub <ArrowUpRight className="ml-1 h-3 w-3" />
-                   </Button>
-                 </div>
-               </div>
-             </div>
+            <div className="rounded-xl border border-teal-500/20 bg-teal-500/[0.02] p-6 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                <Sparkles className="h-24 w-24 text-teal-500" />
+              </div>
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center">
+                    <img src="/prgpt_logo.png" alt="PRGPT" className="w-8 h-8 object-contain" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                      PRGPT - AI PR REVIEWER
+                      <span className="px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20 text-[8px] text-teal-500 font-black uppercase tracking-tighter">UNDER DEVELOPMENT</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground italic">Automated reviews, summarization, and interactive PR chat.</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open('https://github.com/marketplace/actions/prgpt-ai-based-pr-reviewer-summarizer', '_blank')}
+                    className="h-9 px-4 text-[10px] font-black uppercase tracking-wider border-teal-500/30 text-teal-500 hover:bg-teal-500/10"
+                  >
+                    Setup Action
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => window.open('https://github.com/marketplace/actions/prgpt-ai-based-pr-reviewer-summarizer', '_blank')}
+                    className="h-9 px-4 text-[10px] font-black uppercase tracking-wider bg-teal-500 text-black hover:bg-teal-400"
+                  >
+                    View on GitHub <ArrowUpRight className="ml-1 h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Dependency Graph + Dependencies row */}

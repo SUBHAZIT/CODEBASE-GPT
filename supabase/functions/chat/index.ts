@@ -267,24 +267,20 @@ How the system is deployed and infrastructure requirements.
 
 Be thorough, technical, and precise. Reference actual files and code patterns from the codebase.`;
       userMessages = [{ role: "user", content: `Generate a complete system design document for this codebase:\n\n${repoContext}` }];
-    } else {
       // Regular chat - RAG-style with repo context
-      systemPrompt = `You are CodebaseGPT, a friendly and knowledgeable codebase assistant. You help developers understand codebases by answering their questions in a natural, conversational tone.
+      systemPrompt = `You are CodebaseGPT, an expert software architect and senior developer. Your job is to provide highly structured, in-depth, and deeply technical answers to questions about the ongoing codebase.
 
-RULES:
-1. NEVER use markdown headers (no #, ##, ###, etc.). Write in plain conversational paragraphs.
-2. NEVER use bullet point lists with - or *. Instead, explain things naturally in flowing sentences or short paragraphs.
-3. You CAN use code blocks with language hints for code snippets — that's fine.
-4. You CAN use bold (**text**) and inline code (\`text\`) for emphasis.
-5. Cite file paths and line numbers naturally in your text, e.g., "you can find this in \`lib/auth.ts:42-67\`"
-6. Keep your tone casual and helpful — like a senior dev explaining things to a teammate.
-7. If asked "what happens when X?", walk through the code step by step using numbered sentences (1. First... 2. Then...).
-8. Reference specific functions, classes, and patterns by name.
-9. If you don't know something from the context, say so honestly.
-10. Keep responses concise and direct. Don't over-explain.
+RULES for your responses:
+1. USE STRUCTURE: Always use Markdown headers (e.g., ### Overview, ### Architecture) to organize your response cleanly. 
+2. BE IN-DEPTH: Do not give superficial summaries. Dive deep into the code, algorithms, patterns, and data flow.
+3. USE BULLET POINTS: Use bulleted and numbered lists extensively to break down complex logic step-by-step.
+4. SHOW EXAMPLES: Provide precise code snippets from the codebase to back up your points, maintaining original syntax and language hints.
+5. CITE SOURCES: Always cite exact file paths and line numbers naturally (e.g., \`[src/index.ts:15-30]\`) so the developer can follow along.
+6. BE PROFESSIONAL: Provide rigorous technical documentation and architectural reviews. Forget conversational fluff.
+7. ACCURACY IS CRITICAL: Base your analysis strictly on the provided context. If you lack context, clearly state what is missing instead of guessing.
 
 CODEBASE CONTEXT:
-${repoContext || "No specific repo context provided. Answer based on general software engineering knowledge."}`;
+\${repoContext || "No specific repo context provided. Answer based on general software engineering knowledge."}`;
     }
 
     const isStreaming = action !== "overview" && action !== "onboarding" && action !== "security" && action !== "system-design";

@@ -22,7 +22,7 @@ const ChatInterface = () => {
   const location = useLocation();
   const compact = useCompactMode();
   const { settings } = useSettingsStore();
-  const { meta: storeMeta, fileTree: storeFileTree, repoContext, githubToken } = useRepoStore();
+  const { meta: storeMeta, fileTree: storeFileTree, repoContext, githubToken, indexMode: storeIndexMode, unfetchedFiles: storeUnfetchedFiles } = useRepoStore();
 
   const repo = storeMeta || DEMO_REPOS.find((r) => r.id === repoId) || DEMO_REPOS[0];
   const fileTree = storeFileTree.length > 0 ? storeFileTree : DEMO_FILE_TREE;
@@ -101,9 +101,16 @@ const ChatInterface = () => {
       const sid = await ensureSession();
       const chatHist = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
 
+      // Build context — in on-demand mode, append a file listing so AI knows what's available
+      let contextForAI = repoContext || `Repository: ${repo.name} by ${repo.owner}`;
+      if (storeIndexMode === "on-demand" && storeUnfetchedFiles?.length > 0) {
+        const fileList = storeUnfetchedFiles.slice(0, 500).map(f => f.path).join("\n");
+        contextForAI += `\n\n--- ADDITIONAL FILES AVAILABLE ON-DEMAND (not yet fetched) ---\n${fileList}\n--- END FILE LISTING ---\nNote: The above files have not been fetched yet. You can reference them but their contents are not available in context. Focus on the files whose contents are shown above.`;
+      }
+
       await streamChat({
         messages: chatHist,
-        repoContext: repoContext || `Repository: ${repo.name} by ${repo.owner}`,
+        repoContext: contextForAI,
         onDelta: (chunk) => {
           fullContent += chunk;
           setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: fullContent } : m)));
@@ -209,6 +216,9 @@ const ChatInterface = () => {
           <span className="text-[11px] text-muted-foreground">
             {repo.owner}/<span className="text-foreground font-medium">{repo.name}</span>
           </span>
+          {storeIndexMode === "on-demand" && (
+            <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[8px] text-amber-500 font-bold uppercase tracking-wider">ON-DEMAND</span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" onClick={startNewChat} className="h-6 px-2 text-[11px] text-muted-foreground gap-1">
