@@ -48,6 +48,8 @@ const PageLayout: React.FC<PageLayoutProps> = ({ title, subtitle, children, cate
           <div className="hidden md:flex items-center gap-8">
             <Link to="/features" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.2em]">Features</Link>
             <Link to="/how-it-works" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.2em]">How it works</Link>
+            <Link to="/cli" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.2em]">CLI</Link>
+            <Link to="/sdk" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.2em]">SDK</Link>
             <Link to="/faq" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.2em]">FAQ</Link>
             <Link to="/docs" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.2em]">Docs</Link>
           </div>
@@ -154,6 +156,8 @@ const PageLayout: React.FC<PageLayoutProps> = ({ title, subtitle, children, cate
               <ul className="space-y-3">
                 <li><Link to="/features" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.15em]">Features</Link></li>
                 <li><Link to="/how-it-works" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.15em]">How it works</Link></li>
+                <li><Link to="/cli" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.15em]">CLI</Link></li>
+                <li><Link to="/sdk" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.15em]">SDK</Link></li>
                 <li><Link to="/faq" className="text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.15em]">FAQ</Link></li>
               </ul>
             </div>

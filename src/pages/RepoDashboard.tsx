@@ -7,7 +7,7 @@ import {
   User, Terminal, Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DEMO_REPOS, DEMO_OVERVIEW, DEMO_FILE_TREE } from "@/lib/mock-data";
+import { DEMO_REPOS, DEMO_FILE_TREE } from "@/lib/mock-data";
 import { useRepoStore } from "@/lib/store";
 import DependencyGraph from "@/components/dashboard/DependencyGraph";
 import CodebaseSearch from "@/components/dashboard/CodebaseSearch";
@@ -53,6 +53,9 @@ const RepoDashboard = () => {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const fetchAttempted = useRef(false);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const overviewAttempted = useRef(false);
 
   // Auto-fetch repo data when store is empty (e.g. direct navigation via CLI)
   useEffect(() => {
@@ -98,11 +101,17 @@ const RepoDashboard = () => {
         localStorage.setItem(`repo_data_${repoId}`, JSON.stringify(repoData));
 
         setLoadingMessage("Generating AI overview...");
+        setOverviewLoading(true);
         try {
           const overview = await generateOverview(data.repoContext);
           setOverview(overview as any);
+          // Persist overview to cache
+          localStorage.setItem(`repo_data_${repoId}`, JSON.stringify({ ...repoData, overview }));
         } catch (e) {
           console.error("Overview generation failed:", e);
+          setOverviewError(e instanceof Error ? e.message : "Failed to generate overview");
+        } finally {
+          setOverviewLoading(false);
         }
         setLoading(false);
       })
@@ -112,6 +121,45 @@ const RepoDashboard = () => {
         setLoading(false);
       });
   }, [repoId, storeMeta, setRepoData, setOverview, retryCount]);
+
+  // Auto-generate overview when store has repo data but no overview
+  const { repoContext: storeRepoContext } = useRepoStore();
+  useEffect(() => {
+    if (storeOverview || !storeMeta || !storeRepoContext || overviewAttempted.current || overviewLoading) return;
+    overviewAttempted.current = true;
+    setOverviewLoading(true);
+    setOverviewError(null);
+
+    generateOverview(storeRepoContext)
+      .then((overview) => {
+        setOverview(overview as any);
+        // Persist to cache
+        if (repoId) {
+          try {
+            const cached = localStorage.getItem(`repo_data_${repoId}`);
+            if (cached) {
+              const data = JSON.parse(cached);
+              data.overview = overview;
+              localStorage.setItem(`repo_data_${repoId}`, JSON.stringify(data));
+            }
+          } catch { /* ignore */ }
+        }
+      })
+      .catch((e) => {
+        console.error("Overview generation failed:", e);
+        setOverviewError(e instanceof Error ? e.message : "Failed to generate overview");
+      })
+      .finally(() => setOverviewLoading(false));
+  }, [storeOverview, storeMeta, storeRepoContext, repoId, setOverview, overviewLoading]);
+
+  // Retry overview generation
+  const handleRetryOverview = () => {
+    overviewAttempted.current = false;
+    setOverviewError(null);
+    setOverviewLoading(false);
+    // Trigger re-run by resetting
+    setOverview(null as any);
+  };
 
   // Show loading screen while fetching data
   if (loading) {
@@ -174,7 +222,7 @@ const RepoDashboard = () => {
   }
 
   const repo = storeMeta || DEMO_REPOS.find((r) => r.id === repoId) || DEMO_REPOS[0];
-  const overview = storeOverview || DEMO_OVERVIEW;
+  const overview = storeOverview;
   const fileTree = storeFileTree.length > 0 ? storeFileTree : DEMO_FILE_TREE;
 
   const navItems = [
@@ -296,9 +344,9 @@ const RepoDashboard = () => {
           {/* Stats pills */}
           <div className="flex items-center gap-2 mb-8 flex-wrap">
             {[
-              { label: overview.framework.toUpperCase(), icon: Layers, variant: "primary" },
+              { label: (overview?.framework || repo.framework || "Detected").toUpperCase(), icon: Layers, variant: "primary" },
               { label: `${repo.fileCount.toLocaleString()} FILES`, icon: FileCode, variant: "default" },
-              { label: `${overview.complexity.toUpperCase()} COMPLEXITY`, icon: AlertTriangle, variant: overview.complexity === "High" || overview.complexity === "Enterprise" ? "warning" : "default" },
+              { label: `${(overview?.complexity || "Medium").toUpperCase()} COMPLEXITY`, icon: AlertTriangle, variant: (overview?.complexity === "High" || overview?.complexity === "Enterprise") ? "warning" : "default" },
               { label: repo.language.toUpperCase(), icon: Code2, variant: "default" },
             ].map((stat) => (
               <div
@@ -324,7 +372,27 @@ const RepoDashboard = () => {
                 <Sparkles className="h-4 w-4 text-primary" />
                 <h2 className="text-sm font-semibold text-foreground">Architecture Narrative</h2>
               </div>
-              <p className="text-sm leading-relaxed text-secondary-foreground">{overview.narrative}</p>
+              {overviewLoading ? (
+                <div className="space-y-2 animate-pulse">
+                  <div className="h-3 bg-muted rounded w-full" />
+                  <div className="h-3 bg-muted rounded w-5/6" />
+                  <div className="h-3 bg-muted rounded w-4/6" />
+                  <p className="text-xs text-muted-foreground mt-3 flex items-center gap-2">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Generating AI overview…
+                  </p>
+                </div>
+              ) : overviewError ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-destructive">{overviewError}</p>
+                  <Button variant="outline" size="sm" onClick={handleRetryOverview} className="h-7 text-xs">
+                    Retry
+                  </Button>
+                </div>
+              ) : overview ? (
+                <p className="text-sm leading-relaxed text-secondary-foreground">{overview.narrative}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground italic">No overview available yet.</p>
+              )}
             </div>
 
             {/* Key Files card */}
@@ -334,22 +402,35 @@ const RepoDashboard = () => {
                 <h2 className="text-sm font-semibold text-foreground">Key Files</h2>
               </div>
               <div className="space-y-0.5">
-                {overview.keyFiles.slice(0, 5).map((file, i) => {
-                  const Icon = fileIcons[i] || FileCode;
-                  return (
-                    <button
-                      key={i}
-                      className="flex items-center justify-between w-full px-2 py-2 rounded hover:bg-accent/30 transition-colors group"
-                      onClick={() => navigate(`/repo/${repoId}/chat`, { state: { initialQuestion: `Explain the file: ${file}` } })}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-xs font-mono text-foreground">{file.split("/").pop()}</span>
+                {overviewLoading ? (
+                  <div className="space-y-2 animate-pulse">
+                    {[...Array(5)].map((_, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-2">
+                        <div className="h-3.5 w-3.5 bg-muted rounded" />
+                        <div className="h-3 bg-muted rounded w-24" />
                       </div>
-                      <span className="text-[10px] text-muted-foreground">{fileDescriptions[i] || "Source"}</span>
-                    </button>
-                  );
-                })}
+                    ))}
+                  </div>
+                ) : overview ? (
+                  overview.keyFiles.slice(0, 5).map((file, i) => {
+                    const Icon = fileIcons[i] || FileCode;
+                    return (
+                      <button
+                        key={i}
+                        className="flex items-center justify-between w-full px-2 py-2 rounded hover:bg-accent/30 transition-colors group"
+                        onClick={() => navigate(`/repo/${repoId}/chat`, { state: { initialQuestion: `Explain the file: ${file}` } })}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-xs font-mono text-foreground">{file.split("/").pop()}</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{fileDescriptions[i] || "Source"}</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-muted-foreground italic px-2">No key files detected.</p>
+                )}
               </div>
             </div>
           </div>
@@ -433,14 +514,24 @@ const RepoDashboard = () => {
                 <h2 className="text-sm font-semibold text-foreground">Dependencies</h2>
               </div>
               <div className="flex flex-wrap gap-2">
-                {overview.mainDeps.map((dep) => (
-                  <span
-                    key={dep}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs bg-muted text-secondary-foreground border border-border"
-                  >
-                    {dep}
-                  </span>
-                ))}
+                {overviewLoading ? (
+                  <div className="flex flex-wrap gap-2 animate-pulse">
+                    {[...Array(6)].map((_, i) => (
+                      <div key={i} className="h-7 bg-muted rounded-md w-20 border border-border" />
+                    ))}
+                  </div>
+                ) : overview?.mainDeps ? (
+                  overview.mainDeps.map((dep) => (
+                    <span
+                      key={dep}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs bg-muted text-secondary-foreground border border-border"
+                    >
+                      {dep}
+                    </span>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">No dependencies detected.</p>
+                )}
               </div>
             </div>
           </div>
@@ -452,21 +543,35 @@ const RepoDashboard = () => {
               <h2 className="text-sm font-semibold text-foreground">Suggested Questions</h2>
             </div>
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {overview.suggestedQs.slice(0, 4).map((q, i) => {
-                const Icon = QUESTION_ICONS[i % QUESTION_ICONS.length];
-                return (
-                  <button
-                    key={i}
-                    onClick={() => navigate(`/repo/${repoId}/chat`, { state: { initialQuestion: q } })}
-                    className="group text-left p-4 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-primary/5 transition-all duration-200"
-                  >
-                    <Icon className="h-4 w-4 text-muted-foreground mb-3" />
-                    <p className="text-xs text-secondary-foreground group-hover:text-foreground transition-colors leading-relaxed">
-                      {q}
-                    </p>
-                  </button>
-                );
-              })}
+              {overviewLoading ? (
+                [...Array(4)].map((_, i) => (
+                  <div key={i} className="p-4 rounded-lg border border-border bg-card animate-pulse">
+                    <div className="h-4 w-4 bg-muted rounded mb-3" />
+                    <div className="space-y-2">
+                      <div className="h-3 bg-muted rounded w-full" />
+                      <div className="h-3 bg-muted rounded w-3/4" />
+                    </div>
+                  </div>
+                ))
+              ) : overview?.suggestedQs ? (
+                overview.suggestedQs.slice(0, 4).map((q, i) => {
+                  const Icon = QUESTION_ICONS[i % QUESTION_ICONS.length];
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => navigate(`/repo/${repoId}/chat`, { state: { initialQuestion: q } })}
+                      className="group text-left p-4 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-primary/5 transition-all duration-200"
+                    >
+                      <Icon className="h-4 w-4 text-muted-foreground mb-3" />
+                      <p className="text-xs text-secondary-foreground group-hover:text-foreground transition-colors leading-relaxed">
+                        {q}
+                      </p>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="text-xs text-muted-foreground italic col-span-4">No suggested questions available.</p>
+              )}
             </div>
           </section>
         </motion.div>

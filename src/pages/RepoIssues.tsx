@@ -139,9 +139,21 @@ Be precise and reference actual files from the codebase.`;
 
         {/* Error */}
         {error && (
-          <div className="flex items-center gap-2 p-4 rounded border border-destructive/30 bg-destructive/5 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            {error}
+          <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
+                <AlertCircle className="h-5 w-5 text-destructive" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-foreground mb-1">Unable to Load Issues</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed mb-3">{error}</p>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => loadIssues()} className="h-7 px-3 text-[11px]">
+                    <Loader2 className={`h-3 w-3 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Retry
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

@@ -103,7 +103,7 @@ const IndexingProgress = () => {
           githubToken,
         };
 
-        setRepoData(repoData);
+        setRepoData(repoData as any);
 
         // Save to cache if enabled
         if (settings.cacheIndexData) {
@@ -113,7 +113,22 @@ const IndexingProgress = () => {
         setCurrentStage(4);
         try {
           const overview = await generateOverview(data.repoContext);
-          setOverview(overview);
+          setOverview(overview as any);
+
+          // Persist overview into the localStorage cache so refreshes keep it
+          if (settings.cacheIndexData) {
+            const cacheKey = `repo_cache_${githubUrl}`;
+            const cached = localStorage.getItem(cacheKey);
+            if (cached) {
+              try {
+                const cachedData = JSON.parse(cached);
+                cachedData.overview = overview;
+                localStorage.setItem(cacheKey, JSON.stringify(cachedData));
+              } catch { /* ignore */ }
+            }
+          }
+          // Also persist with repo-specific key for direct navigation
+          localStorage.setItem(`repo_data_${data.repoId}`, JSON.stringify({ ...repoData, overview }));
         } catch (e) {
           console.error("Overview generation failed:", e);
         }

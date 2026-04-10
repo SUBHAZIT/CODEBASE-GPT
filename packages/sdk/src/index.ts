@@ -102,11 +102,28 @@ export class CodebaseGPTClient {
   }
 
   async generateOverview(repoContext: string): Promise<OverviewData> {
-    const { data, error } = await this.supabase.functions.invoke("chat", {
-      body: { action: "overview", repoContext },
+    const resp = await fetch(`${this.supabaseUrl}/functions/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.supabaseKey}`,
+      },
+      body: JSON.stringify({ action: "overview", repoContext }),
     });
 
-    if (error) throw new Error(error.message || "Failed to generate overview");
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => "");
+      let errorMsg = `Overview generation failed (HTTP ${resp.status})`;
+      try {
+        const parsed = JSON.parse(errBody);
+        if (parsed.error) errorMsg = parsed.error;
+      } catch {
+        if (errBody) errorMsg += `: ${errBody.slice(0, 300)}`;
+      }
+      throw new Error(errorMsg);
+    }
+
+    const data = await resp.json();
     if (data?.error) throw new Error(data.error);
 
     try {
@@ -132,11 +149,28 @@ export class CodebaseGPTClient {
   }
 
   async generateSecurityScan(repoContext: string): Promise<SecurityFinding[]> {
-    const { data, error } = await this.supabase.functions.invoke("chat", {
-      body: { action: "security", repoContext },
+    const resp = await fetch(`${this.supabaseUrl}/functions/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.supabaseKey}`,
+      },
+      body: JSON.stringify({ action: "security", repoContext }),
     });
 
-    if (error) throw new Error(error.message || "Failed to run security scan");
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => "");
+      let errorMsg = `Security scan failed (HTTP ${resp.status})`;
+      try {
+        const parsed = JSON.parse(errBody);
+        if (parsed.error) errorMsg = parsed.error;
+      } catch {
+        if (errBody) errorMsg += `: ${errBody.slice(0, 300)}`;
+      }
+      throw new Error(errorMsg);
+    }
+
+    const data = await resp.json();
     if (data?.error) throw new Error(data.error);
 
     try {
@@ -164,12 +198,38 @@ export class CodebaseGPTClient {
     state: "open" | "closed" = "open",
     githubToken?: string
   ): Promise<GitHubIssue[]> {
-    const { data, error } = await this.supabase.functions.invoke("repo-issues", {
-      body: { owner, repo, state, githubToken },
-    });
-    if (error) throw new Error(error.message || "Failed to fetch issues");
-    if (data?.error) throw new Error(data.error);
-    return data.issues || [];
+    try {
+      const { data, error } = await this.supabase.functions.invoke("repo-issues", {
+        body: { owner, repo, state, githubToken },
+      });
+
+      if (error) {
+        // Translate Supabase edge function errors into user-friendly messages
+        const msg = error.message || "";
+        if (msg.includes("non-2xx") || msg.includes("edge function")) {
+          throw new Error(
+            `Could not fetch issues for ${owner}/${repo}. The repository may be private or temporarily unavailable.${!githubToken ? " Try adding a GitHub Personal Access Token for private repos." : ""}`
+          );
+        }
+        throw new Error(`Failed to fetch issues: ${msg}`);
+      }
+
+      if (data?.error) {
+        // GitHub API-level error forwarded by the edge function
+        if (data.error.includes("404") || data.error.includes("Not Found")) {
+          throw new Error(`Repository ${owner}/${repo} not found. Check the repo name or add a GitHub token for private repos.`);
+        }
+        if (data.error.includes("403") || data.error.includes("rate limit")) {
+          throw new Error("GitHub API rate limit reached. Add a GitHub Personal Access Token to increase your limit.");
+        }
+        throw new Error(data.error);
+      }
+
+      return data.issues || [];
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      throw new Error("Something went wrong while fetching issues. Please try again.");
+    }
   }
 
   async fetchFileContent(params: {

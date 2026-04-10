@@ -6,25 +6,157 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-const GEMINI_MODEL = "gemini-2.0-flash";
+// ── Provider Configuration ──────────────────────────────────────────────────
+interface ProviderConfig {
+  name: string;
+  url: string;
+  model: string;
+  getKey: () => string | undefined;
+}
 
+const PROVIDERS: ProviderConfig[] = [
+  {
+    name: "gemini",
+    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    model: "gemini-2.0-flash",
+    getKey: () => Deno.env.get("GOOGLE_GEMINI_API_KEY"),
+  },
+  {
+    name: "openai",
+    url: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4o-mini",
+    getKey: () => Deno.env.get("OPENAI_API_KEY"),
+  },
+];
+
+// Lovable gateway as last-resort fallback
+const LOVABLE_FALLBACK: ProviderConfig = {
+  name: "lovable",
+  url: "https://ai.gateway.lovable.dev/v1/chat/completions",
+  model: "google/gemini-3-flash-preview",
+  getKey: () => Deno.env.get("LOVABLE_API_KEY"),
+};
+
+// ── Rate-Limit Tracker (in-memory per isolate) ─────────────────────────────
+const COOLDOWN_MS = 60_000; // 60-second cooldown after a 429
+const rateLimitState: Record<string, number> = {}; // provider name → blockedUntil timestamp
+
+function isProviderAvailable(provider: ProviderConfig): boolean {
+  const key = provider.getKey();
+  if (!key) return false;
+  const blockedUntil = rateLimitState[provider.name] || 0;
+  return Date.now() >= blockedUntil;
+}
+
+function markRateLimited(providerName: string) {
+  rateLimitState[providerName] = Date.now() + COOLDOWN_MS;
+  console.log(`[rate-limit] ${providerName} blocked for ${COOLDOWN_MS / 1000}s`);
+}
+
+function getAvailableProviders(): ProviderConfig[] {
+  const available = PROVIDERS.filter(isProviderAvailable);
+  // If no primary providers available, try Lovable gateway
+  if (available.length === 0 && LOVABLE_FALLBACK.getKey()) {
+    return [LOVABLE_FALLBACK];
+  }
+  return available;
+}
+
+// ── AI Fetch with Failover ──────────────────────────────────────────────────
+async function fetchWithFailover(
+  body: Record<string, unknown>,
+  isStreaming: boolean,
+): Promise<Response> {
+  const available = getAvailableProviders();
+
+  if (available.length === 0) {
+    return new Response(
+      JSON.stringify({
+        error: "All AI providers are currently rate-limited. Please try again in ~60 seconds.",
+      }),
+      { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  let lastError: Response | null = null;
+
+  for (const provider of available) {
+    const apiKey = provider.getKey()!;
+    console.log(`[ai] trying provider: ${provider.name} (${provider.model})`);
+
+    try {
+      const response = await fetch(provider.url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...body,
+          model: provider.model,
+          stream: isStreaming,
+        }),
+      });
+
+      if (response.ok) {
+        console.log(`[ai] success with ${provider.name}`);
+        return response;
+      }
+
+      // Rate limited → mark and try next provider
+      if (response.status === 429) {
+        markRateLimited(provider.name);
+        console.warn(`[ai] 429 from ${provider.name}, trying next provider...`);
+        lastError = response;
+        continue;
+      }
+
+      // Payment / quota error → try next provider
+      if (response.status === 402 || response.status === 403) {
+        console.warn(`[ai] ${response.status} from ${provider.name}, trying next provider...`);
+        lastError = response;
+        continue;
+      }
+
+      // Other errors (400, 500, etc.) — return directly
+      const errorText = await response.text();
+      console.error(`[ai] ${provider.name} error ${response.status}:`, errorText.slice(0, 300));
+      return new Response(
+        JSON.stringify({ error: `AI service error from ${provider.name} (${response.status}): ${errorText.slice(0, 200)}` }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    } catch (fetchErr) {
+      console.error(`[ai] fetch error for ${provider.name}:`, fetchErr);
+      lastError = new Response(
+        JSON.stringify({ error: `Failed to reach ${provider.name}: ${fetchErr}` }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+      continue;
+    }
+  }
+
+  // All providers failed (rate-limited cascade)
+  if (lastError) {
+    return new Response(
+      JSON.stringify({
+        error: "All AI providers are currently unavailable (rate-limited or unreachable). Please try again in ~60 seconds.",
+      }),
+      { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  return new Response(
+    JSON.stringify({ error: "No AI API key configured. Please add a Google Gemini or OpenAI API key." }),
+    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
+}
+
+// ── Main Server ─────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const { messages, repoContext, action } = await req.json();
-
-    // Prefer user's own Gemini key, fall back to Lovable AI gateway
-    const GOOGLE_GEMINI_API_KEY = Deno.env.get("GOOGLE_GEMINI_API_KEY");
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-
-    const useGeminiDirect = !!GOOGLE_GEMINI_API_KEY;
-    const apiUrl = useGeminiDirect ? GEMINI_API_URL : "https://ai.gateway.lovable.dev/v1/chat/completions";
-    const apiKey = useGeminiDirect ? GOOGLE_GEMINI_API_KEY : LOVABLE_API_KEY;
-    const model = useGeminiDirect ? GEMINI_MODEL : "google/gemini-3-flash-preview";
-
-    if (!apiKey) throw new Error("No AI API key configured. Please add a Google Gemini API key.");
 
     let systemPrompt = "";
     let userMessages = messages || [];
@@ -157,39 +289,19 @@ ${repoContext || "No specific repo context provided. Answer based on general sof
 
     const isStreaming = action !== "overview" && action !== "onboarding" && action !== "security" && action !== "system-design";
 
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...userMessages,
-        ],
-        stream: isStreaming,
-      }),
-    });
+    const requestBody = {
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...userMessages,
+      ],
+    };
 
+    const response = await fetchWithFailover(requestBody, isStreaming);
+
+    // If our failover wrapper already returned an error JSON, pass it through
     if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Usage limit reached. Please add credits to continue." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const text = await response.text();
-      console.error("AI API error:", response.status, text);
-      return new Response(JSON.stringify({ error: `AI service error (${response.status}): ${text.slice(0, 200)}` }), {
-        status: 500,
+      return new Response(response.body, {
+        status: response.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

@@ -5,6 +5,7 @@ import ora from "ora";
 import { CodebaseGPTClient } from "@codebasegpt/sdk";
 import dotenv from "dotenv";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 // Load .env from CWD first, then override with CLI package's own .env
@@ -15,6 +16,40 @@ dotenv.config({ path: path.resolve(__dirname, "../.env"), override: true });
 
 const program = new Command();
 
+// --- Local cache helpers ---
+const CACHE_DIR = path.join(process.cwd(), ".codebasegpt");
+
+function ensureCacheDir() {
+  if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+  }
+}
+
+function saveRepoContext(repoId: string, repoContext: string) {
+  ensureCacheDir();
+  fs.writeFileSync(path.join(CACHE_DIR, `${repoId}.ctx`), repoContext, "utf-8");
+}
+
+function loadRepoContext(repoId: string): string | null {
+  const ctxPath = path.join(CACHE_DIR, `${repoId}.ctx`);
+  if (fs.existsSync(ctxPath)) {
+    return fs.readFileSync(ctxPath, "utf-8");
+  }
+  return null;
+}
+
+function getLatestRepoId(): string | null {
+  ensureCacheDir();
+  const files = fs.readdirSync(CACHE_DIR).filter((f) => f.endsWith(".ctx"));
+  if (files.length === 0) return null;
+  // Return the most recently modified
+  const sorted = files
+    .map((f) => ({ name: f, mtime: fs.statSync(path.join(CACHE_DIR, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  return sorted[0].name.replace(".ctx", "");
+}
+
+// --- Supabase client ---
 const getClient = () => {
   const supabaseUrl = process.env.CODEBASEGPT_SUPABASE_URL || "";
   const supabaseKey = process.env.CODEBASEGPT_SUPABASE_KEY || "";
@@ -34,6 +69,27 @@ const getClient = () => {
   });
 };
 
+/**
+ * Resolve repoContext from a repo ID argument, or use the latest indexed repo.
+ */
+function resolveRepoContext(repoIdArg?: string): { repoId: string; repoContext: string } {
+  const repoId = repoIdArg || getLatestRepoId();
+  if (!repoId) {
+    console.error(chalk.red("Error: No repo ID provided and no previously indexed repos found."));
+    console.error(chalk.yellow("Run: codebasegpt index <github-url> first."));
+    process.exit(1);
+  }
+
+  const ctx = loadRepoContext(repoId);
+  if (!ctx) {
+    console.error(chalk.red(`Error: No cached context found for repo "${repoId}".`));
+    console.error(chalk.yellow("Run: codebasegpt index <github-url> to re-index the repo."));
+    process.exit(1);
+  }
+
+  return { repoId, repoContext: ctx };
+}
+
 program
   .name("codebasegpt")
   .description("Official CLI for CodebaseGPT")
@@ -43,9 +99,6 @@ program
   .command("init")
   .description("Initialize CodebaseGPT configuration")
   .action(async () => {
-    const fs = await import("fs");
-    const path = await import("path");
-    
     const envPath = path.join(process.cwd(), ".env");
     if (fs.existsSync(envPath)) {
       console.log(chalk.yellow("Note: .env file already exists."));
@@ -79,6 +132,10 @@ program
       console.log(chalk.blue(`Repo ID: ${repo.repoId}`));
       console.log(chalk.blue(`Total Files: ${repo.totalFiles}`));
 
+      // Cache the repo context locally for scan/overview commands
+      saveRepoContext(repo.repoId, repo.repoContext);
+      console.log(chalk.dim(`Cached repo context to .codebasegpt/${repo.repoId}.ctx`));
+
       // Auto-open the dashboard after successful indexing
       const { default: open } = await import("open");
       const dashboardUrl = process.env.CODEBASEGPT_DASHBOARD_URL || "http://localhost:8080";
@@ -97,8 +154,11 @@ program
 program
   .command("overview")
   .description("Generate an overview of an indexed repository")
-  .argument("<repoContext>", "Repository context string (from index command)")
-  .action(async (repoContext: string) => {
+  .argument("[repoId]", "Repository ID (uses last indexed repo if omitted)")
+  .action(async (repoIdArg?: string) => {
+    const { repoId, repoContext } = resolveRepoContext(repoIdArg);
+    console.log(chalk.dim(`Using repo: ${repoId}`));
+
     const client = getClient();
     const spinner = ora("Generating overview...").start();
     try {
@@ -116,8 +176,11 @@ program
 program
   .command("scan")
   .description("Run a security scan on an indexed repository")
-  .argument("<repoContext>", "Repository context string")
-  .action(async (repoContext: string) => {
+  .argument("[repoId]", "Repository ID (uses last indexed repo if omitted)")
+  .action(async (repoIdArg?: string) => {
+    const { repoId, repoContext } = resolveRepoContext(repoIdArg);
+    console.log(chalk.dim(`Using repo: ${repoId}`));
+
     const client = getClient();
     const spinner = ora("Running security scan...").start();
     try {
@@ -138,13 +201,15 @@ program
 program
   .command("open")
   .description("Open the repository dashboard in your browser")
-  .argument("<repoId>", "Repository ID (e.g. gh-owner-repo-id)")
-  .action(async (repoId: string) => {
+  .argument("[repoId]", "Repository ID (uses last indexed repo if omitted)")
+  .action(async (repoIdArg?: string) => {
+    const repoId = repoIdArg || getLatestRepoId();
+    if (!repoId) {
+      console.error(chalk.red("Error: No repo ID provided and no previously indexed repos found."));
+      process.exit(1);
+    }
+
     const { default: open } = await import("open");
-    // Ensure .env is loaded from the current directory
-    const dotenv = await import("dotenv");
-    dotenv.config();
-    
     const dashboardUrl = process.env.CODEBASEGPT_DASHBOARD_URL || "http://localhost:8080";
     
     const url = `${dashboardUrl}/repo/${repoId}`;

@@ -25,6 +25,8 @@ import Contact from "./pages/Contact";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import OurPhilosophy from "./pages/OurPhilosophy";
+import CLIPage from "./pages/CLIPage";
+import SDKPage from "./pages/SDKPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -60,6 +62,8 @@ const App = () => {
               <Route path="/profile" element={<Profile />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/our-philosophy" element={<OurPhilosophy />} />
+              <Route path="/cli" element={<CLIPage />} />
+              <Route path="/sdk" element={<SDKPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

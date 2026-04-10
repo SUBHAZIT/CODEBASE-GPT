@@ -8,7 +8,7 @@ interface HealthState {
   lastChecked: string;
   checks: {
     github: boolean;
-    gemini: boolean;
+    ai: boolean;
     network: boolean;
   };
   checkHealth: () => Promise<void>;
@@ -18,7 +18,7 @@ export const useHealthStore = create<HealthState>((set) => ({
   status: 'operational',
   latency: 45,
   lastChecked: new Date().toISOString(),
-  checks: { github: true, gemini: true, network: true },
+  checks: { github: true, ai: true, network: true },
   
   checkHealth: async () => {
     const start = performance.now();
@@ -49,7 +49,7 @@ export const useHealthStore = create<HealthState>((set) => ({
       lastChecked: new Date().toISOString(),
       checks: {
         github: isGithubUp,
-        gemini: true, // Assuming Gemini is handled via private proxy, always true if network is up
+        ai: true, // Multi-provider AI (Gemini + OpenAI) — always true if network is up
         network: isNetworkUp
       }
     });

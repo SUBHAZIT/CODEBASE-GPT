@@ -47,10 +47,26 @@ var CodebaseGPTClient = class {
     }
   }
   async generateSecurityScan(repoContext) {
-    const { data, error } = await this.supabase.functions.invoke("chat", {
-      body: { action: "security", repoContext }
+    const resp = await fetch(`${this.supabaseUrl}/functions/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.supabaseKey}`
+      },
+      body: JSON.stringify({ action: "security", repoContext })
     });
-    if (error) throw new Error(error.message || "Failed to run security scan");
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => "");
+      let errorMsg = `Security scan failed (HTTP ${resp.status})`;
+      try {
+        const parsed = JSON.parse(errBody);
+        if (parsed.error) errorMsg = parsed.error;
+      } catch {
+        if (errBody) errorMsg += `: ${errBody.slice(0, 300)}`;
+      }
+      throw new Error(errorMsg);
+    }
+    const data = await resp.json();
     if (data?.error) throw new Error(data.error);
     try {
       let content = data.content || "";

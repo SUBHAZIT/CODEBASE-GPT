@@ -1,0 +1,1616 @@
+--- .prettierrc.json ---
+{
+  "printWidth": 80,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "none",
+  "bracketSpacing": false,
+  "arrowParens": "avoid",
+  "proseWrap": "always"
+}
+
+
+--- .devcontainer/devcontainer.json ---
+{
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+  }
+}
+
+
+--- src/bot.ts ---
+import {info, warning} from '@actions/core'
+import OpenAI from 'openai'
+import pRetry from 'p-retry'
+import {OpenAIOptions, Options} from './options'
+
+export interface Ids {
+  parentMessageId?: string
+  conversationId?: string
+}
+
+export class Bot {
+  private readonly api: OpenAI
+  private readonly options: Options
+  private readonly openaiOptions: OpenAIOptions
+
+  constructor(options: Options, openaiOptions: OpenAIOptions) {
+    this.options = options
+    this.openaiOptions = openaiOptions
+    const apiKey = process.env.OPENAI_API_KEY
+    if (apiKey) {
+      this.api = new OpenAI({apiKey})
+    } else {
+      const err =
+        "Unable to initialize the OpenAI API, 'OPENAI_API_KEY' environment variable is not available"
+      throw new Error(err)
+    }
+  }
+
+  chat = async (message: string, ids: Ids): Promise<[string, Ids]> => {
+    let res: [string, Ids] = ['', {}]
+    try {
+      res = await this.chat_(message, ids)
+      return res
+    } catch (e: any) {
+      warning(`Failed to chat: ${e}, backtrace: ${e.stack}`)
+      return res
+    }
+  }
+
+  private readonly chat_ = async (
+    message: string,
+    ids: Ids
+  ): Promise<[string, Ids]> => {
+    const start = Date.now()
+    if (!message) {
+      return ['', {}]
+    }
+
+    let responseText = ''
+
+    try {
+      const currentDate = new Date().toISOString().split('T')[0]
+      const systemMessage = `${this.options.systemMessage} 
+Knowledge cutoff: ${this.openaiOptions.tokenLimits.knowledgeCutOff}
+Current date: ${currentDate}
+
+IMPORTANT: Entire response must be in the language with ISO code: ${this.options.language}
+`
+
+      const result = await pRetry(
+        async () => {
+          const res = await this.api.chat.completions.create({
+            model: this.openaiOptions.model,
+            temperature: this.options.openaiModelTemperature,
+            messages: [
+              {role: 'system', content: systemMessage},
+              {role: 'user', content: message}
+            ]
+          })
+
+          if (res.choices.length > 0 && res.choices[0].message?.content) {
+            return res.choices[0].message.content
+          }
+          return ''
+        },
+        {
+          retries: this.options.openaiRetries
+        }
+      )
+
+      responseText = result
+    } catch (e: any) {
+      info(`failed to send message to openai: ${e}, backtrace: ${e.stack}`)
+    }
+
+    const end = Date.now()
+    info(
+      `openai sendMessage (including retries) response time: ${end - start} ms`
+    )
+
+    if (responseText === '') {
+      warning('openai response is empty')
+    }
+
+    if (responseText.startsWith('with ')) {
+      responseText = responseText.substring(5)
+    }
+
+    if (this.options.debug) {
+      info(`openai responses: \n${responseText}`)
+    }
+
+    const newIds: Ids = {
+      parentMessageId: Math.random().toString(36).substring(7),
+      conversationId:
+        ids.conversationId || Math.random().toString(36).substring(7)
+    }
+    return [responseText, newIds]
+  }
+}
+
+
+--- .github/dependabot.yml ---
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+
+
+--- .eslintrc.json ---
+{
+  "plugins": ["jest", "@typescript-eslint"],
+  "extends": [
+    "plugin:github/recommended",
+    "eslint:recommended",
+    "plugin:prettier/recommended",
+    "plugin:import/errors",
+    "plugin:import/warnings",
+    "plugin:import/typescript"
+  ],
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": "latest",
+    "sourceType": "module",
+    "project": "./tsconfig.json"
+  },
+  "globals": {
+    "globalThis": false
+  },
+  "rules": {
+    "i18n-text/no-en": "off"
+  },
+  "env": {
+    "node": true,
+    "es6": true,
+    "jest/globals": true
+  }
+}
+
+
+--- src/prompts.ts ---
+import {type Inputs} from './inputs'
+
+export class Prompts {
+  summarize: string
+  summarizeReleaseNotes: string
+
+  summarizeFileDiff = `## GitHub PR Title
+
+\`$title\` 
+
+## Description
+
+\`\`\`
+$description
+\`\`\`
+
+## Diff
+
+\`\`\`diff
+$file_diff
+\`\`\`
+
+## Instructions
+
+I would like you to succinctly summarize the diff within 100 words.
+If applicable, your summary should include a note about alterations 
+to the signatures of exported functions, global data structures and 
+variables, and any changes that might affect the external interface or 
+behavior of the code.
+`
+  triageFileDiff = `Below the summary, I would also like you to triage the diff as \`NEEDS_REVIEW\` or 
+\`APPROVED\` based on the following criteria:
+
+- If the diff involves any modifications to the logic or functionality, even if they 
+  seem minor, triage it as \`NEEDS_REVIEW\`. This includes changes to control structures, 
+  function calls, or variable assignments that might impact the behavior of the code.
+- If the diff only contains very minor changes that don't affect the code logic, such as 
+  fixing typos, formatting, or renaming variables for clarity, triage it as \`APPROVED\`.
+
+Please evaluate the diff thoroughly and take into account factors such as the number of 
+lines changed, the potential impact on the overall system, and the likelihood of 
+introducing new bugs or security vulnerabilities. 
+When in doubt, always err on the side of caution and triage the diff as \`NEEDS_REVIEW\`.
+
+You must strictly follow the format below for triaging the diff:
+[TRIAGE]: <NEEDS_REVIEW or APPROVED>
+
+Important:
+- In your summary do not mention that the file needs a through review or caution about
+  potential issues.
+- Do not provide any reasoning why you triaged the diff as \`NEEDS_REVIEW\` or \`APPROVED\`.
+- Do not mention that these changes affect the logic or functionality of the code in 
+  the summary. You must only use the triage status format above to indicate that.
+`
+  summarizeChangesets = `Provided below are changesets in this pull request. Changesets 
+are in chronlogical order and new changesets are appended to the
+end of the list. The format consists of filename(s) and the summary 
+of changes for those files. There is a separator between each changeset.
+Your task is to deduplicate and group together files with
+related/similar changes into a single changeset. Respond with the updated 
+changesets using the same format as the input. 
+
+$raw_summary
+`
+
+  summarizePrefix = `Here is the summary of changes you have generated for files:
+      \`\`\`
+      $raw_summary
+      \`\`\`
+
+`
+
+  summarizeShort = `Your task is to provide a concise summary of the changes. This 
+summary will be used as a prompt while reviewing each file and must be very clear for 
+the AI bot to understand. 
+
+Instructions:
+
+- Focus on summarizing only the changes in the PR and stick to the facts.
+- Do not provide any instructions to the bot on how to perform the review.
+- Do not mention that files need a through revie
+
+--- src/octokit.ts ---
+import {getInput, warning} from '@actions/core'
+import {Octokit} from '@octokit/action'
+import {retry} from '@octokit/plugin-retry'
+import {throttling} from '@octokit/plugin-throttling'
+
+const token = getInput('token') || process.env.GITHUB_TOKEN
+
+const RetryAndThrottlingOctokit = Octokit.plugin(
+  throttling as any,
+  retry as any
+)
+
+export const octokit = new RetryAndThrottlingOctokit({
+  auth: `token ${token}`,
+  throttle: {
+    onRateLimit: (
+      retryAfter: number,
+      options: any,
+      _o: any,
+      retryCount: number
+    ) => {
+      warning(
+        `Request quota exhausted for request ${options.method} ${options.url}
+Retry after: ${retryAfter} seconds
+Retry count: ${retryCount}
+`
+      )
+      if (retryCount <= 3) {
+        warning(`Retrying after ${retryAfter} seconds!`)
+        return true
+      }
+    },
+    onSecondaryRateLimit: (retryAfter: number, options: any) => {
+      warning(
+        `SecondaryRateLimit detected for request ${options.method} ${options.url} ; retry after ${retryAfter} seconds`
+      )
+      // if we are doing a POST method on /repos/{owner}/{repo}/pulls/{pull_number}/reviews then we shouldn't retry
+      if (
+        options.method === 'POST' &&
+        options.url.match(/\/repos\/.*\/.*\/pulls\/.*\/reviews/)
+      ) {
+        return false
+      }
+      return true
+    }
+  }
+})
+
+
+--- src/review.ts ---
+import {error, info, warning} from '@actions/core'
+// eslint-disable-next-line camelcase
+import {context as github_context} from '@actions/github'
+import pLimit from 'p-limit'
+import {type Bot} from './bot'
+import {
+  Commenter,
+  COMMENT_REPLY_TAG,
+  RAW_SUMMARY_END_TAG,
+  RAW_SUMMARY_START_TAG,
+  SHORT_SUMMARY_END_TAG,
+  SHORT_SUMMARY_START_TAG,
+  SUMMARIZE_TAG
+} from './commenter'
+import {Inputs} from './inputs'
+import {octokit} from './octokit'
+import {type Options} from './options'
+import {type Prompts} from './prompts'
+import {getTokenCount} from './tokenizer'
+
+// eslint-disable-next-line camelcase
+const context = github_context
+const repo = context.repo
+
+const ignoreKeyword = '@prgpt: ignore'
+
+export const codeReview = async (
+  lightBot: Bot,
+  heavyBot: Bot,
+  options: Options,
+  prompts: Prompts
+): Promise<void> => {
+  const commenter: Commenter = new Commenter()
+
+  const openaiConcurrencyLimit = pLimit(options.openaiConcurrencyLimit)
+  const githubConcurrencyLimit = pLimit(options.githubConcurrencyLimit)
+
+  if (
+    context.eventName !== 'pull_request' &&
+    context.eventName !== 'pull_request_target'
+  ) {
+    warning(
+      `Skipped: current event is ${context.eventName}, only support pull_request event`
+    )
+    return
+  }
+  if (context.payload.pull_request == null) {
+    warning('Skipped: context.payload.pull_request is null')
+    return
+  }
+
+  const inputs: Inputs = new Inputs()
+  inputs.title = context.payload.pull_request.title
+  if (context.payload.pull_request.body != null) {
+    inputs.description = commenter.getDescription(
+      context.payload.pull_request.body
+    )
+  }
+
+  // if the description contains ignore_keyword, skip
+  if (inputs.description.includes(ignoreKeyword)) {
+    info('Skipped: description contains ignore_keyword')
+    return
+  }
+
+  // as gpt-3.5-turbo isn't paying attention to system message, add to inputs for now
+  inputs.systemMessage = options.systemMessage
+
+  // get SUMMARIZE_TAG message
+  const existingSummarizeCmt = await commenter.findCommentWithTag(
+    SUMMARIZE_TAG,
+    context.payload.pull_request.number
+  )
+  let existingCommitIdsBlock = ''
+  let existingSummarizeCmtBody = ''
+  if (existingSummarizeCmt != null) {
+    existingSummarizeCmtBody = existingSummarizeCmt.body
+    inputs.rawSummary = commenter.getRawSummary(existingSummarizeCmtBody)
+    inputs.shortSummary = commenter.getShortSummary(existingSummarizeCmtBody)
+    existingCommitIdsBlock = commenter.getReviewedCommitIdsBlock(
+      existingSummarizeCmtBody
+    )
+  }
+
+  const allCommitIds = await commenter.getAllCommitIds()
+  // find highest reviewed commit id
+  let highestReviewedCommitId = ''
+  if (existingCommitIdsBlock !== '') {
+    highestReviewedCommitId = commenter.getHighestReviewedCommitId(
+      allCommitIds,
+      commenter.getReviewedCommitIds(existingCommitIdsBlock)
+    )
+  }
+
+  if (
+    highestReviewedCommitId === '' ||
+    highestReviewedCommitId === context.payload.pull_request.head.sha
+  ) {
+    info(
+      `Will revie
+
+--- src/review-comment.ts ---
+import {info, warning} from '@actions/core'
+// eslint-disable-next-line camelcase
+import {context as github_context} from '@actions/github'
+import {type Bot} from './bot'
+import {
+  Commenter,
+  COMMENT_REPLY_TAG,
+  COMMENT_TAG,
+  SUMMARIZE_TAG
+} from './commenter'
+import {Inputs} from './inputs'
+import {octokit} from './octokit'
+import {type Options} from './options'
+import {type Prompts} from './prompts'
+import {getTokenCount} from './tokenizer'
+
+// eslint-disable-next-line camelcase
+const context = github_context
+const repo = context.repo
+const ASK_BOT = '@prgpt'
+
+export const handleReviewComment = async (
+  heavyBot: Bot,
+  options: Options,
+  prompts: Prompts
+) => {
+  const commenter: Commenter = new Commenter()
+  const inputs: Inputs = new Inputs()
+
+  if (context.eventName !== 'pull_request_review_comment') {
+    warning(
+      `Skipped: ${context.eventName} is not a pull_request_review_comment event`
+    )
+    return
+  }
+
+  if (!context.payload) {
+    warning(`Skipped: ${context.eventName} event is missing payload`)
+    return
+  }
+
+  const comment = context.payload.comment
+  if (comment == null) {
+    warning(`Skipped: ${context.eventName} event is missing comment`)
+    return
+  }
+  if (
+    context.payload.pull_request == null ||
+    context.payload.repository == null
+  ) {
+    warning(`Skipped: ${context.eventName} event is missing pull_request`)
+    return
+  }
+  inputs.title = context.payload.pull_request.title
+  if (context.payload.pull_request.body) {
+    inputs.description = commenter.getDescription(
+      context.payload.pull_request.body
+    )
+  }
+
+  // check if the comment was created and not edited or deleted
+  if (context.payload.action !== 'created') {
+    warning(`Skipped: ${context.eventName} event is not created`)
+    return
+  }
+
+  // Check if the comment is not from the bot itself
+  if (
+    !comment.body.includes(COMMENT_TAG) &&
+    !comment.body.includes(COMMENT_REPLY_TAG)
+  ) {
+    const pullNumber = context.payload.pull_request.number
+
+    inputs.comment = `${comment.user.login}: ${comment.body}`
+    inputs.diff = comment.diff_hunk
+    inputs.filename = comment.path
+
+    const {chain: commentChain, topLevelComment} =
+      await commenter.getCommentChain(pullNumber, comment)
+
+    if (!topLevelComment) {
+      warning('Failed to find the top-level comment to reply to')
+      return
+    }
+
+    inputs.commentChain = commentChain
+
+    // check whether this chain contains replies from the bot
+    if (
+      commentChain.includes(COMMENT_TAG) ||
+      commentChain.includes(COMMENT_REPLY_TAG) ||
+      comment.body.includes(ASK_BOT)
+    ) {
+      let fileDiff = ''
+      try {
+        // get diff for this file by comparing the base and head commits
+        const diffAll = await octokit.repos.compareCommits({
+          owner: repo.owner,
+          repo: repo.repo,
+          base: context.payload.pull_request.base.sha,
+          head: context.payload.pull_request.head.sha
+        })
+        if (diffAll.data) {
+          const file
+
+--- src/limits.ts ---
+export class TokenLimits {
+  maxTokens: number
+  requestTokens: number
+  responseTokens: number
+  knowledgeCutOff: string
+
+  constructor(model = 'gpt-4o-mini') {
+    this.knowledgeCutOff = '2023-11-01'
+    if (model.includes('gpt-4o') && !model.includes('mini')) {
+      this.maxTokens = 128000
+      this.responseTokens = 16000
+    } else if (model.includes('gpt-4o-mini')) {
+      this.maxTokens = 128000
+      this.responseTokens = 16000
+    } else if (model === 'gpt-4-32k') {
+      this.maxTokens = 32600
+      this.responseTokens = 4000
+    } else if (model === 'gpt-3.5-turbo-16k') {
+      this.maxTokens = 16300
+      this.responseTokens = 3000
+    } else if (model === 'gpt-4') {
+      this.maxTokens = 8000
+      this.responseTokens = 2000
+    } else {
+      this.maxTokens = 4000
+      this.responseTokens = 1000
+    }
+    // provide some margin for the request tokens
+    this.requestTokens = this.maxTokens - this.responseTokens - 100
+  }
+
+  string(): string {
+    return `max_tokens=${this.maxTokens}, request_tokens=${this.requestTokens}, response_tokens=${this.responseTokens}`
+  }
+}
+
+
+--- .github/workflows/prgpt-review.yml ---
+name: PRGPT Reviewer
+
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+
+concurrency:
+  group:
+    ${{ github.repository }}-${{ github.event.number || github.head_ref ||
+    github.sha }}-${{ github.workflow }}-${{ github.event_name ==
+    'pull_request_review_comment' && 'pr_comment' || 'pr' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request_review_comment' }}
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{github.event.pull_request.head.repo.full_name}}
+          ref: ${{github.event.pull_request.head.ref}}
+          submodules: false
+      - uses: ./
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          debug: true
+          review_comment_lgtm: false
+          openai_heavy_model: gpt-4o
+          openai_light_model: gpt-4o-mini
+          path_filters: |
+            !dist/**
+            !**/*.lock
+
+
+--- src/inputs.ts ---
+export class Inputs {
+  systemMessage: string
+  title: string
+  description: string
+  rawSummary: string
+  shortSummary: string
+  filename: string
+  fileContent: string
+  fileDiff: string
+  patches: string
+  diff: string
+  commentChain: string
+  comment: string
+
+  constructor(
+    systemMessage = '',
+    title = 'no title provided',
+    description = 'no description provided',
+    rawSummary = '',
+    shortSummary = '',
+    filename = '',
+    fileContent = 'file contents cannot be provided',
+    fileDiff = 'file diff cannot be provided',
+    patches = '',
+    diff = 'no diff',
+    commentChain = 'no other comments on this patch',
+    comment = 'no comment provided'
+  ) {
+    this.systemMessage = systemMessage
+    this.title = title
+    this.description = description
+    this.rawSummary = rawSummary
+    this.shortSummary = shortSummary
+    this.filename = filename
+    this.fileContent = fileContent
+    this.fileDiff = fileDiff
+    this.patches = patches
+    this.diff = diff
+    this.commentChain = commentChain
+    this.comment = comment
+  }
+
+  clone(): Inputs {
+    return new Inputs(
+      this.systemMessage,
+      this.title,
+      this.description,
+      this.rawSummary,
+      this.shortSummary,
+      this.filename,
+      this.fileContent,
+      this.fileDiff,
+      this.patches,
+      this.diff,
+      this.commentChain,
+      this.comment
+    )
+  }
+
+  render(content: string): string {
+    if (!content) {
+      return ''
+    }
+    if (this.systemMessage) {
+      content = content.replace('$system_message', this.systemMessage)
+    }
+    if (this.title) {
+      content = content.replace('$title', this.title)
+    }
+    if (this.description) {
+      content = content.replace('$description', this.description)
+    }
+    if (this.rawSummary) {
+      content = content.replace('$raw_summary', this.rawSummary)
+    }
+    if (this.shortSummary) {
+      content = content.replace('$short_summary', this.shortSummary)
+    }
+    if (this.filename) {
+      content = content.replace('$filename', this.filename)
+    }
+    if (this.fileContent) {
+      content = content.replace('$file_content', this.fileContent)
+    }
+    if (this.fileDiff) {
+      content = content.replace('$file_diff', this.fileDiff)
+    }
+    if (this.patches) {
+      content = content.replace('$patches', this.patches)
+    }
+    if (this.diff) {
+      content = content.replace('$diff', this.diff)
+    }
+    if (this.commentChain) {
+      content = content.replace('$comment_chain', this.commentChain)
+    }
+    if (this.comment) {
+      content = content.replace('$comment', this.comment)
+    }
+    return content
+  }
+}
+
+
+--- package.json ---
+{
+  "name": "prgpt",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PRGPT - Gemini-based PR Reviewer and Summarizer.",
+  "main": "lib/main.js",
+  "scripts": {
+    "build": "cp node_modules/@dqbd/tiktoken/tiktoken_bg.wasm dist/tiktoken_bg.wasm && tsc",
+    "package": "ncc build --license licenses.txt",
+    "act": "npm run build && npm run package && ./bin/act pull_request_target --secret-file .secrets",
+    "format": "prettier --write '**/*.ts'",
+    "format-check": "prettier --check '**/*.ts'",
+    "lint": "eslint src/**/*.ts",
+    "test": "jest",
+    "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/subhajit/prgpt.git"
+  },
+  "keywords": [
+    "actions",
+    "node",
+    "setup"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.10.0",
+    "@actions/github": "^5.1.1",
+    "@dqbd/tiktoken": "^1.0.7",
+    "@octokit/action": "^6.0.4",
+    "@octokit/plugin-retry": "^4.1.3",
+    "@octokit/plugin-throttling": "^6.1.0",
+    "dotenv": "^17.3.1",
+    "minimatch": "^9.0.1",
+    "node-fetch": "^3.3.1",
+    "openai": "^6.33.0",
+    "p-limit": "^4.0.0",
+    "p-retry": "^5.1.2"
+  },
+  "devDependencies": {
+    "@jest/globals": "^29.5.0",
+    "@types/node": "^20.4.2",
+    "@typescript-eslint/eslint-plugin": "^5.59.6",
+    "@typescript-eslint/parser": "^5.59.6",
+    "@vercel/ncc": "^0.36.1",
+    "eslint": "^8.41.0",
+    "eslint-config-standard-with-typescript": "^36.0.0",
+    "eslint-plugin-github": "^4.6.1",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-jest": "^27.2.1",
+    "eslint-plugin-n": "^15.7.0",
+    "eslint-plugin-promise": "^6.1.1",
+    "jest": "^27.2.5",
+    "js-yaml": "^4.1.0",
+    "prettier": "2.8.8",
+    "ts-jest": "^27.1.2",
+    "tsx": "^4.21.0",
+    "typescript": "^4.9.5"
+  }
+}
+
+
+--- src/tokenizer.ts ---
+// eslint-disable-next-line camelcase
+import {get_encoding} from '@dqbd/tiktoken'
+
+const tokenizer = get_encoding('cl100k_base')
+
+export function encode(input: string): Uint32Array {
+  return tokenizer.encode(input)
+}
+
+export function getTokenCount(input: string): number {
+  input = input.replace(/<\|endoftext\|>/g, '')
+  return encode(input).length
+}
+
+
+--- __tests__/main.test.ts ---
+import {expect, test} from '@jest/globals'
+import * as cp from 'child_process'
+import * as path from 'path'
+import * as process from 'process'
+
+test('test runs', () => {
+  process.env['INPUT_ACTION'] = 'code-review'
+  const np = process.execPath
+  const ip = path.join(__dirname, '..', 'lib', 'main.js')
+  const options: cp.ExecFileSyncOptions = {
+    env: process.env
+  }
+  console.log(cp.execFileSync(np, [ip], options).toString())
+})
+
+
+--- jest.config.json ---
+{
+  "clearMocks": true,
+  "moduleFileExtensions": ["js", "ts"],
+  "testMatch": ["**/*.test.ts"],
+  "transform": {
+    "^.+\\.ts$": "ts-jest"
+  },
+  "verbose": true
+}
+
+--- .github/workflows/versioning.yml ---
+name: Tag latest
+
+on:
+  release:
+    types: [published, edited]
+
+jobs:
+  actions-tagger:
+    runs-on: windows-latest
+    steps:
+      - uses: Actions-R-Us/actions-tagger@latest
+        with:
+          publish_latest_tag: true
+
+
+--- src/fetch-polyfill.js ---
+// fetch-polyfill.js
+import fetch, {Headers, Request, Response} from 'node-fetch'
+
+if (!globalThis.fetch) {
+  globalThis.fetch = fetch
+  globalThis.Headers = Headers
+  globalThis.Request = Request
+  globalThis.Response = Response
+}
+
+
+--- src/options.ts ---
+import {info} from '@actions/core'
+import {minimatch} from 'minimatch'
+import {TokenLimits} from './limits'
+
+export class Options {
+  debug: boolean
+  disableReview: boolean
+  disableReleaseNotes: boolean
+  maxFiles: number
+  reviewSimpleChanges: boolean
+  reviewCommentLGTM: boolean
+  pathFilters: PathFilter
+  systemMessage: string
+  openaiLightModel: string
+  openaiHeavyModel: string
+  openaiModelTemperature: number
+  openaiRetries: number
+  openaiTimeoutMS: number
+  openaiConcurrencyLimit: number
+  githubConcurrencyLimit: number
+  lightTokenLimits: TokenLimits
+  heavyTokenLimits: TokenLimits
+  language: string
+
+  constructor(
+    debug: boolean,
+    disableReview: boolean,
+    disableReleaseNotes: boolean,
+    maxFiles = '0',
+    reviewSimpleChanges = false,
+    reviewCommentLGTM = false,
+    pathFilters: string[] | null = null,
+    systemMessage = '',
+    openaiLightModel = 'gpt-4o-mini',
+    openaiHeavyModel = 'gpt-4o',
+    openaiModelTemperature = '0.7',
+    openaiRetries = '3',
+    openaiTimeoutMS = '120000',
+    openaiConcurrencyLimit = '6',
+    githubConcurrencyLimit = '6',
+    language = 'en-US'
+  ) {
+    this.debug = debug
+    this.disableReview = disableReview
+    this.disableReleaseNotes = disableReleaseNotes
+    this.maxFiles = parseInt(maxFiles)
+    this.reviewSimpleChanges = reviewSimpleChanges
+    this.reviewCommentLGTM = reviewCommentLGTM
+    this.pathFilters = new PathFilter(pathFilters)
+    this.systemMessage = systemMessage
+    this.openaiLightModel = openaiLightModel
+    this.openaiHeavyModel = openaiHeavyModel
+    this.openaiModelTemperature = parseFloat(openaiModelTemperature)
+    this.openaiRetries = parseInt(openaiRetries)
+    this.openaiTimeoutMS = parseInt(openaiTimeoutMS)
+    this.openaiConcurrencyLimit = parseInt(openaiConcurrencyLimit)
+    this.githubConcurrencyLimit = parseInt(githubConcurrencyLimit)
+    this.lightTokenLimits = new TokenLimits(this.openaiLightModel)
+    this.heavyTokenLimits = new TokenLimits(this.openaiHeavyModel)
+    this.language = language
+  }
+
+  // print all options using info
+  print(): void {
+    info(`debug: ${this.debug}`)
+    info(`disable_review: ${this.disableReview}`)
+    info(`disable_release_notes: ${this.disableReleaseNotes}`)
+    info(`max_files: ${this.maxFiles}`)
+    info(`review_simple_changes: ${this.reviewSimpleChanges}`)
+    info(`review_comment_lgtm: ${this.reviewCommentLGTM}`)
+    info(`path_filters: ${this.pathFilters}`)
+    info(`system_message: ${this.systemMessage}`)
+    info(`openai_light_model: ${this.openaiLightModel}`)
+    info(`openai_heavy_model: ${this.openaiHeavyModel}`)
+    info(`openai_model_temperature: ${this.openaiModelTemperature}`)
+    info(`openai_retries: ${this.openaiRetries}`)
+    info(`openai_timeout_ms: ${this.openaiTimeoutMS}`)
+    info(`openai_concurrency_limit: ${this.openaiConcurrencyLimit}`)
+    info(`github_concurrency_limit: ${this.githubConcurrencyLimit}`)
+    info(`summary_token_limits: ${this.lightTokenLimits.string()}`)
+    info(`review_to
+
+--- src/main.ts ---
+import {
+  getBooleanInput,
+  getInput,
+  getMultilineInput,
+  setFailed,
+  warning
+} from '@actions/core'
+import {Bot} from './bot'
+import {OpenAIOptions, Options} from './options'
+import {Prompts} from './prompts'
+import {codeReview} from './review'
+import {handleReviewComment} from './review-comment'
+
+async function run(): Promise<void> {
+  const options: Options = new Options(
+    getBooleanInput('debug'),
+    getBooleanInput('disable_review'),
+    getBooleanInput('disable_release_notes'),
+    getInput('max_files'),
+    getBooleanInput('review_simple_changes'),
+    getBooleanInput('review_comment_lgtm'),
+    getMultilineInput('path_filters'),
+    getInput('system_message'),
+    getInput('openai_light_model'),
+    getInput('openai_heavy_model'),
+    getInput('openai_model_temperature'),
+    getInput('openai_retries'),
+    getInput('openai_timeout_ms'),
+    getInput('openai_concurrency_limit'),
+    getInput('github_concurrency_limit'),
+    getInput('language')
+  )
+
+  // print options
+  options.print()
+
+  const prompts: Prompts = new Prompts(
+    getInput('summarize'),
+    getInput('summarize_release_notes')
+  )
+
+  // Create two bots, one for summary and one for review
+
+  let lightBot: Bot | null = null
+  try {
+    lightBot = new Bot(
+      options,
+      new OpenAIOptions(options.openaiLightModel, options.lightTokenLimits)
+    )
+  } catch (e: any) {
+    warning(
+      `Skipped: failed to create summary bot, please check your openai_api_key: ${e}, backtrace: ${e.stack}`
+    )
+    return
+  }
+
+  let heavyBot: Bot | null = null
+  try {
+    heavyBot = new Bot(
+      options,
+      new OpenAIOptions(options.openaiHeavyModel, options.heavyTokenLimits)
+    )
+  } catch (e: any) {
+    warning(
+      `Skipped: failed to create review bot, please check your openai_api_key: ${e}, backtrace: ${e.stack}`
+    )
+    return
+  }
+
+  try {
+    // check if the event is pull_request
+    if (
+      process.env.GITHUB_EVENT_NAME === 'pull_request' ||
+      process.env.GITHUB_EVENT_NAME === 'pull_request_target'
+    ) {
+      await codeReview(lightBot, heavyBot, options, prompts)
+    } else if (
+      process.env.GITHUB_EVENT_NAME === 'pull_request_review_comment'
+    ) {
+      await handleReviewComment(heavyBot, options, prompts)
+    } else {
+      warning('Skipped: this action only works on push events or pull_request')
+    }
+  } catch (e: any) {
+    if (e instanceof Error) {
+      setFailed(`Failed to run: ${e.message}, backtrace: ${e.stack}`)
+    } else {
+      setFailed(`Failed to run: ${e}, backtrace: ${e.stack}`)
+    }
+  }
+}
+
+process
+  .on('unhandledRejection', (reason, p) => {
+    warning(`Unhandled Rejection at Promise: ${reason}, promise is ${p}`)
+  })
+  .on('uncaughtException', (e: any) => {
+    warning(`Uncaught Exception thrown: ${e}, backtrace: ${e.stack}`)
+  })
+
+run()
+
+
+--- test-gemini.js ---
+import * as dotenv from 'dotenv';
+import { Bot } from './bot.ts';
+import { Options, GeminiOptions } from './options.ts';
+import { TokenLimits } from './limits.ts';
+dotenv.config();
+async function testGemini() {
+    const options = new Options(true, // debug
+    false, // disableReview
+    false, // disableReleaseNotes
+    '10', // maxFiles
+    false, // reviewSimpleChanges
+    false, // reviewCommentLGTM
+    null, // pathFilters
+    'You are a helpful assistant.', // systemMessage
+    'gemini-2.0-flash', 'gemini-2.5-pro', '0.7', '3', '120000', '6', '6', 'en-US');
+    const geminiOptions = new GeminiOptions(options.geminiHeavyModel, new TokenLimits(options.geminiHeavyModel));
+    try {
+        const bot = new Bot(options, geminiOptions);
+        console.log('--- Testing Gemini Chat ---');
+        console.log('Sending message to Gemini...');
+        const [response, ids] = await bot.chat('Hello! Can you summarize that you are PRGPT powered by Gemini?', {});
+        console.log('Response:', response);
+        console.log('IDs:', ids);
+        console.log('--- Test Successful! ---');
+    }
+    catch (error) {
+        console.error('--- Test Failed! ---');
+        console.error(error);
+    }
+}
+testGemini();
+
+
+--- tsconfig.json ---
+{
+  "compilerOptions": {
+    "incremental": false,
+    "sourceMap": false,
+    "allowJs": true,
+    "checkJs": false,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "target": "ES2022",
+    "module": "CommonJS",
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["dist", "lib", "node_modules", "**/*.test.ts"]
+}
+
+
+--- test-gemini.ts ---
+import * as dotenv from 'dotenv'
+import {Bot} from './src/bot.ts'
+import {Options, GeminiOptions} from './src/options.ts'
+import {TokenLimits} from './src/limits.ts'
+
+dotenv.config()
+
+async function testGemini() {
+  const options = new Options(
+    true, // debug
+    false, // disableReview
+    false, // disableReleaseNotes
+    '10', // maxFiles
+    false, // reviewSimpleChanges
+    false, // reviewCommentLGTM
+    null, // pathFilters
+    'You are a helpful assistant.', // systemMessage
+    'gemini-2.0-flash',
+    'gemini-2.0-flash',
+    '0.7',
+    '3',
+    '120000',
+    '6',
+    '6',
+    'en-US'
+  )
+
+  const geminiOptions = new GeminiOptions(
+    options.geminiHeavyModel,
+    new TokenLimits(options.geminiHeavyModel)
+  )
+
+  try {
+    const bot = new Bot(options, geminiOptions)
+    console.log('--- Testing Gemini Chat ---')
+    console.log('Sending message to Gemini...')
+    const [response, ids] = await bot.chat(
+      'Hello! Can you confirm you are PRGPT powered by Gemini?',
+      {}
+    )
+    console.log('Response:', response)
+    console.log('IDs:', ids)
+    console.log('--- Test Successful! ---')
+  } catch (error) {
+    console.error('--- Test Failed! ---')
+    console.error(error)
+  }
+}
+
+testGemini()
+
+
+--- README.md ---
+# PRGPT - AI-based PR reviewer and summarizer (Gemini Powered)
+
+<p align="center">
+  <img src="docs/images/emerald_logo_fixed.png" alt="PRGPT Logo" width="200"/>
+</p>
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Overview
+
+PRGPT `ai-pr-reviewer` is an AI-based code reviewer and summarizer for GitHub pull requests using **Google Gemini 1.5** models. It is designed to be used as a GitHub Action and can be configured to run on every pull request and review comments.
+
+
+## Reviewer Features:
+
+- **PR Summarization**: It generates a summary and release notes of the changes in the pull request.
+- **Line-by-line code change suggestions**: Reviews the changes line by line and provides code change suggestions.
+- **Continuous, incremental reviews**: Reviews are performed on each commit within a pull request, rather than a one-time review on the entire pull request.
+- **Cost-effective and reduced noise**: Uses Gemini's large context window to provide comprehensive reviews while tracking changed files between commits.
+- **"Light" model for summary**: Designed to be used with a "light" summarization model (e.g. `gemini-1.5-flash`) and a "heavy" review model (e.g. `gemini-1.5-pro`).
+- **Chat with bot**: Supports conversation with the bot in the context of lines of code or entire files.
+- **Smart review skipping**: By default, skips in-depth review for simple changes (e.g. typo fixes).
+- **Customizable prompts**: Tailor the `system_message`, `summarize`, and `summarize_release_notes` prompts.
+
+## Install instructions
+
+PRGPT runs as a GitHub Action. Add the below file to your repository at `.github/workflows/prgpt.yml`
+
+```yaml
+name: Code Review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  pull_request:
+  pull_request_review_comment:
+    types: [created]
+
+concurrency:
+  group:
+    ${{ github.repository }}-${{ github.event.number || github.head_ref ||
+    github.sha }}-${{ github.workflow }}-${{ github.event_name ==
+    'pull_request_review_comment' && 'pr_comment' || 'pr' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request_review_comment' }}
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: subhajit/prgpt@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          debug: false
+          review_simple_changes: false
+          review_comment_lgtm: false
+```
+
+#### Environment variables
+
+- `GITHUB_TOKEN`: This should already be available to the GitHub Action environment. This is used to add comments to the pull request.
+- `GEMINI_API_KEY`: use this to authenticate with Google Gemini API. You can get one from the [Google AI Studio](https://aistudio.google.com/app/apikey). Please add this key to your GitHub Action secrets.
+
+### Models: `gemini-1.5-pro` and `gemini-1.5-flash`
+
+Recommend using `gemini-1.5-flash` for lighter tasks such as summarizing the changes (`gemini
+
+--- .github/workflows/combine-prs.yml ---
+name: 'Combine PRs'
+
+# Controls when the action will run - in this case triggered manually
+on:
+  workflow_dispatch:
+    inputs:
+      branchPrefix:
+        description: 'Branch prefix to find combinable PRs based on'
+        required: true
+        default: 'dependabot'
+      mustBeGreen:
+        description: 'Only combine PRs that are green (status is success)'
+        required: true
+        default: 'true'
+      combineBranchName:
+        description: 'Name of the branch to combine PRs into'
+        required: true
+        default: 'combine-prs-branch'
+      ignoreLabel:
+        description: 'Exclude PRs with this label'
+        required: true
+        default: 'nocombine'
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "combine-prs"
+  combine-prs:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: Set variables
+        env:
+          DEFAULT_BRANCH_PREFIX: dependabot
+          DEFAULT_MUST_BE_GREEN: true
+          DEFAULT_COMBINE_BRANCH_NAME: combine-prs-branch
+          DEFAULT_IGNORE_LABEL: nocombine
+        run: |
+          echo "BRANCH_PREFIX=${{ github.event.inputs.branchPrefix || env.DEFAULT_BRANCH_PREFIX }}" >> $GITHUB_ENV
+          echo "MUST_BE_GREEN=${{ github.event.inputs.mustBeGreen || env.DEFAULT_MUST_BE_GREEN }}" >> $GITHUB_ENV
+          echo "COMBINE_BRANCH_NAME=${{ github.event.inputs.combineBranchName || env.DEFAULT_COMBINE_BRANCH_NAME }}" >> $GITHUB_ENV
+          echo "IGNORE_LABEL=${{ github.event.inputs.ignoreLabel || env.DEFAULT_IGNORE_LABEL }}" >> $GITHUB_ENV
+
+      - uses: actions/github-script@v6
+        id: fetch-branch-names
+        name: Fetch branch names
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const pulls = await github.paginate('GET /repos/:owner/:repo/pulls', {
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            group_labels = ["javascript"];
+            branches = {};
+
+            base_branch = null;
+            for (const pull of pulls)
+            {
+              const branch = pull['head']['ref'];
+              console.log('Pull for branch: ' + branch);
+              if (branch.startsWith('${{ env.BRANCH_PREFIX }}')) {
+                console.log('Branch matched: ' + branch);
+                statusOK = true;
+                if(${{ env.MUST_BE_GREEN}}) {
+                  console.log('Checking green status: ' + branch);
+                  const statuses = await github.paginate('GET /repos/{owner}/{repo}/commits/{ref}/status', {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: branch
+                  });
+                  if(statuses.length > 0) {
+                    const latest_status = statuses[0]['state'];
+ 
+
+--- action.yml ---
+name: 'PRGPT - AI-based PR Reviewer & Summarizer'
+description: 'AI-based PR Reviewer & Summarizer with Chat Capabilities'
+branding:
+  icon: 'git-merge'
+  color: 'blue'
+author: 'Subhajit'
+inputs:
+  debug:
+    required: false
+    description: 'Enable debug mode'
+    default: 'false'
+  max_files:
+    required: false
+    description:
+      'Max files to summarize and review. Less than or equal to 0 means no
+      limit.'
+    default: '150'
+  review_simple_changes:
+    required: false
+    description: 'Review even when the changes are simple'
+    default: 'false'
+  review_comment_lgtm:
+    required: false
+    description: 'Leave comments even if the patch is LGTM'
+    default: 'false'
+  path_filters:
+    required: false
+    description: |
+      The path filters, e.g., "src/**.py", "!dist/**", each line will be considered as one pattern.
+      See also
+
+      - https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#onpushpull_requestpull_request_targetpathspaths-ignore
+      - https://github.com/isaacs/minimatch
+    default: |
+      !dist/**
+      !**/*.app
+      !**/*.bin
+      !**/*.bz2
+      !**/*.class
+      !**/*.db
+      !**/*.csv
+      !**/*.tsv
+      !**/*.dat
+      !**/*.dll
+      !**/*.dylib
+      !**/*.egg
+      !**/*.glif
+      !**/*.gz
+      !**/*.xz
+      !**/*.zip
+      !**/*.7z
+      !**/*.rar
+      !**/*.zst
+      !**/*.ico
+      !**/*.jar
+      !**/*.tar
+      !**/*.war
+      !**/*.lo
+      !**/*.log
+      !**/*.mp3
+      !**/*.wav
+      !**/*.wma
+      !**/*.mp4
+      !**/*.avi
+      !**/*.mkv
+      !**/*.wmv
+      !**/*.m4a
+      !**/*.m4v
+      !**/*.3gp
+      !**/*.3g2
+      !**/*.rm
+      !**/*.mov
+      !**/*.flv
+      !**/*.iso
+      !**/*.swf
+      !**/*.flac
+      !**/*.nar
+      !**/*.o
+      !**/*.ogg
+      !**/*.otf
+      !**/*.p
+      !**/*.pdf
+      !**/*.doc
+      !**/*.docx
+      !**/*.xls
+      !**/*.xlsx
+      !**/*.ppt
+      !**/*.pptx
+      !**/*.pkl
+      !**/*.pickle
+      !**/*.pyc
+      !**/*.pyd
+      !**/*.pyo
+      !**/*.pub
+      !**/*.pem
+      !**/*.rkt
+      !**/*.so
+      !**/*.ss
+      !**/*.eot
+      !**/*.exe
+      !**/*.pb.go
+      !**/*.lock
+      !**/*.ttf
+      !**/*.yaml
+      !**/*.yml
+      !**/*.cfg
+      !**/*.toml
+      !**/*.ini
+      !**/*.mod
+      !**/*.sum
+      !**/*.work
+      !**/*.json
+      !**/*.mmd
+      !**/*.svg
+      !**/*.jpeg
+      !**/*.jpg
+      !**/*.png
+      !**/*.gif
+      !**/*.bmp
+      !**/*.tiff
+      !**/*.webm
+      !**/*.woff
+      !**/*.woff2
+      !**/*.dot
+      !**/*.md5sum
+      !**/*.wasm
+      !**/*.snap
+      !**/*.parquet
+      !**/gen/**
+      !**/_gen/**
+      !**/generated/**
+      !**/@generated/**
+      !**/vendor/**
+      !**/*.min.js
+      !**/*.min.js.map
+      !**/*.min.js.css
+      !**/*.tfstate
+      !**/*.tfstate.backup
+  disable_review:
+    required: false
+    description: 'Only provide the summary and skip the code review.'
+    default: 'false'
+  disable_release_notes:
+    required: false
+    description: 'D
+
+--- src/commenter.ts ---
+import {getInput, info, warning} from '@actions/core'
+// eslint-disable-next-line camelcase
+import {context as github_context} from '@actions/github'
+import {octokit} from './octokit'
+
+// eslint-disable-next-line camelcase
+const context = github_context
+const repo = context.repo
+
+export const COMMENT_GREETING = `${getInput('bot_icon')}   PRGPT`
+
+export const COMMENT_TAG = '<!-- This is an auto-generated comment by PRGPT -->'
+
+export const COMMENT_REPLY_TAG =
+  '<!-- This is an auto-generated reply by PRGPT -->'
+
+export const SUMMARIZE_TAG =
+  '<!-- This is an auto-generated comment: summarize by PRGPT -->'
+
+export const IN_PROGRESS_START_TAG =
+  '<!-- This is an auto-generated comment: summarize review in progress by PRGPT -->'
+
+export const IN_PROGRESS_END_TAG =
+  '<!-- end of auto-generated comment: summarize review in progress by PRGPT -->'
+
+export const DESCRIPTION_START_TAG =
+  '<!-- This is an auto-generated comment: release notes by PRGPT -->'
+export const DESCRIPTION_END_TAG =
+  '<!-- end of auto-generated comment: release notes by PRGPT -->'
+
+export const RAW_SUMMARY_START_TAG = `<!-- This is an auto-generated comment: raw summary by PRGPT -->
+<!--
+`
+export const RAW_SUMMARY_END_TAG = `-->
+<!-- end of auto-generated comment: raw summary by PRGPT -->`
+
+export const SHORT_SUMMARY_START_TAG = `<!-- This is an auto-generated comment: short summary by PRGPT -->
+<!--
+`
+
+export const SHORT_SUMMARY_END_TAG = `-->
+<!-- end of auto-generated comment: short summary by PRGPT -->`
+
+export const COMMIT_ID_START_TAG = '<!-- commit_ids_reviewed_start -->'
+export const COMMIT_ID_END_TAG = '<!-- commit_ids_reviewed_end -->'
+
+export class Commenter {
+  /**
+   * @param mode Can be "create", "replace". Default is "replace".
+   */
+  async comment(message: string, tag: string, mode: string) {
+    let target: number
+    if (context.payload.pull_request != null) {
+      target = context.payload.pull_request.number
+    } else if (context.payload.issue != null) {
+      target = context.payload.issue.number
+    } else {
+      warning(
+        'Skipped: context.payload.pull_request and context.payload.issue are both null'
+      )
+      return
+    }
+
+    if (!tag) {
+      tag = COMMENT_TAG
+    }
+
+    const body = `${COMMENT_GREETING}
+
+${message}
+
+${tag}`
+
+    if (mode === 'create') {
+      await this.create(body, target)
+    } else if (mode === 'replace') {
+      await this.replace(body, tag, target)
+    } else {
+      warning(`Unknown mode: ${mode}, use "replace" instead`)
+      await this.replace(body, tag, target)
+    }
+  }
+
+  getContentWithinTags(content: string, startTag: string, endTag: string) {
+    const start = content.indexOf(startTag)
+    const end = content.indexOf(endTag)
+    if (start >= 0 && end >= 0) {
+      return content.slice(start + startTag.length, end)
+    }
+    return ''
+  }
+
+  removeContentWithinTags(content: string, startTag: string, endTag: string) {
+    const start = content.indexOf(startTag)
+    const end = content.lastIndexOf(endTag)
+    
+
+--- package-lock.json ---
+{
+  "name": "prgpt",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "prgpt",
+      "version": "1.0.0",
+      "license": "MIT",
+      "dependencies": {
+        "@actions/core": "^1.10.0",
+        "@actions/github": "^5.1.1",
+        "@dqbd/tiktoken": "^1.0.7",
+        "@octokit/action": "^6.0.4",
+        "@octokit/plugin-retry": "^4.1.3",
+        "@octokit/plugin-throttling": "^6.1.0",
+        "dotenv": "^17.3.1",
+        "minimatch": "^9.0.1",
+        "node-fetch": "^3.3.1",
+        "openai": "^6.33.0",
+        "p-limit": "^4.0.0",
+        "p-retry": "^5.1.2"
+      },
+      "devDependencies": {
+        "@jest/globals": "^29.5.0",
+        "@types/node": "^20.4.2",
+        "@typescript-eslint/eslint-plugin": "^5.59.6",
+        "@typescript-eslint/parser": "^5.59.6",
+        "@vercel/ncc": "^0.36.1",
+        "eslint": "^8.41.0",
+        "eslint-config-standard-with-typescript": "^36.0.0",
+        "eslint-plugin-github": "^4.6.1",
+        "eslint-plugin-import": "^2.27.5",
+        "eslint-plugin-jest": "^27.2.1",
+        "eslint-plugin-n": "^15.7.0",
+        "eslint-plugin-promise": "^6.1.1",
+        "jest": "^27.2.5",
+        "js-yaml": "^4.1.0",
+        "prettier": "2.8.8",
+        "ts-jest": "^27.1.2",
+        "tsx": "^4.21.0",
+        "typescript": "^4.9.5"
+      }
+    },
+    "node_modules/@actions/core": {
+      "version": "1.10.0",
+      "resolved": "https://registry.npmjs.org/@actions/core/-/core-1.10.0.tgz",
+      "integrity": "sha512-2aZDDa3zrrZbP5ZYg159sNoLRb61nQ7awl5pSvIq5Qpj81vwDzdMRKzkWJGJuwVvWpvZKx7vspJALyvaaIQyug==",
+      "dependencies": {
+        "@actions/http-client": "^2.0.1",
+        "uuid": "^8.3.2"
+      }
+    },
+    "node_modules/@actions/github": {
+      "version": "5.1.1",
+      "resolved": "https://registry.npmjs.org/@actions/github/-/github-5.1.1.tgz",
+      "integrity": "sha512-Nk59rMDoJaV+mHCOJPXuvB1zIbomlKS0dmSIqPGxd0enAXBnOfn4VWF+CGtRCwXZG9Epa54tZA7VIRlJDS8A6g==",
+      "dependencies": {
+        "@actions/http-client": "^2.0.1",
+        "@octokit/core": "^3.6.0",
+        "@octokit/plugin-paginate-rest": "^2.17.0",
+        "@octokit/plugin-rest-endpoint-methods": "^5.13.0"
+      }
+    },
+    "node_modules/@actions/github/node_modules/@octokit/auth-token": {
+      "version": "2.5.0",
+      "resolved": "https://registry.npmjs.org/@octokit/auth-token/-/auth-token-2.5.0.tgz",
+      "integrity": "sha512-r5FVUJCOLl19AxiuZD2VRZ/ORjp/4IN98Of6YJoJOkY75CIBuYfmiNHGrDwXr+aLGG55igl9QrxX3hbiXlLb+g==",
+      "dependencies": {
+        "@octokit/types": "^6.0.3"
+      }
+    },
+    "node_modules/@actions/github/node_modules/@octokit/core": {
+      "version": "3.6.0",
+      "resolved": "https://registry.npmjs.org/@octokit/core/-/core-3.6.0.tgz",
+      "integrity": "sha512-7RKRKuA4xTjMhY+eG3jthb3hlZCsOwg3rztWh75Xc+ShDWOfDDATWbeZpAHBNRpm4Tv9WgBMOy1zEJYXG6NJ7Q==",
+      "dependencies": {
+        "@octokit/auth-token": "^2.4.4",
+        "@octokit/graphql": "^4.5.8",
+        "@octokit/
