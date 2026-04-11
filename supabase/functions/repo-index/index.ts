@@ -164,7 +164,8 @@ serve(async (req) => {
     let filesToFetch: any[];
     if (isOnDemand) {
       // On-demand mode: only fetch skeleton/config files
-      filesToFetch = sourceFiles.filter((f: any) => isSkeletonFile(f.path));
+      // Secondary safety: limit skeleton files to 100 to avoid context overflow
+      filesToFetch = sourceFiles.filter((f: any) => isSkeletonFile(f.path)).slice(0, 100);
       console.log(`On-demand mode: fetching ${filesToFetch.length} skeleton files out of ${totalSourceFiles} total`);
     } else {
       // Full mode: fetch up to 200 files (existing behavior)
@@ -191,7 +192,7 @@ serve(async (req) => {
             const decoded = atob(data.content.replace(/\n/g, ""));
             fileContents[idx] = {
               path: file.path,
-              content: decoded.slice(0, 3000),
+              content: decoded.slice(0, 2000), // Reduced from 3000 to stay under 128k token limit
               size: data.size,
             };
           }
