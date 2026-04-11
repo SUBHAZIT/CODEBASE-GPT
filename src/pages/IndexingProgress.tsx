@@ -8,6 +8,7 @@ import { useRepoStore } from "@/lib/store";
 import { useUserAuth } from "@/hooks/use-user-auth";
 import { toast } from "@/hooks/use-toast";
 import { useSettingsStore } from "@/lib/settings-store";
+import { getRepoCache, setRepoCache } from "@/lib/db";
 
 const STAGES_FULL = [
   { label: "Fetching file tree", icon: GitBranch },
@@ -72,16 +73,19 @@ const IndexingProgress = () => {
         // Check cache first
         if (settings.cacheIndexData) {
           const cacheKey = `repo_cache_${githubUrl}`;
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) {
-            console.log("Found cached index for:", githubUrl);
-            const data = JSON.parse(cached);
-            setRepoData(data);
-            setCurrentStage(4);
-            setDone(true);
-            setIndexing(false);
-            setTimeout(() => navigate(`/repo/${data.repoId}`), 800);
-            return;
+          try {
+            const cached = await getRepoCache(cacheKey);
+            if (cached) {
+              console.log("Found cached index for:", githubUrl);
+              setRepoData(cached);
+              setCurrentStage(4);
+              setDone(true);
+              setIndexing(false);
+              setTimeout(() => navigate(`/repo/${cached.repoId}`), 800);
+              return;
+            }
+          } catch (err) {
+            console.error("Cache read failed, proceeding with fresh index:", err);
           }
         }
 
@@ -125,7 +129,11 @@ const IndexingProgress = () => {
 
         // Save to cache if enabled
         if (settings.cacheIndexData) {
-          localStorage.setItem(`repo_cache_${githubUrl}`, JSON.stringify(repoData));
+          try {
+            await setRepoCache(`repo_cache_${githubUrl}`, repoData);
+          } catch (err) {
+            console.warn("Failed to cache repo data in IndexedDB:", err);
+          }
         }
 
         setCurrentStage(4);
@@ -133,20 +141,27 @@ const IndexingProgress = () => {
           const overview = await generateOverview(data.repoContext);
           setOverview(overview as any);
 
-          // Persist overview into the localStorage cache so refreshes keep it
+          // Persist overview into the cache so refreshes keep it
           if (settings.cacheIndexData) {
             const cacheKey = `repo_cache_${githubUrl}`;
-            const cached = localStorage.getItem(cacheKey);
-            if (cached) {
-              try {
-                const cachedData = JSON.parse(cached);
+            try {
+              const cachedData = await getRepoCache(cacheKey);
+              if (cachedData) {
                 cachedData.overview = overview;
-                localStorage.setItem(cacheKey, JSON.stringify(cachedData));
-              } catch { /* ignore */ }
+                await setRepoCache(cacheKey, cachedData);
+              }
+            } catch (err) {
+              console.warn("Failed to update cache with overview:", err);
             }
           }
+          
           // Also persist with repo-specific key for direct navigation
-          localStorage.setItem(`repo_data_${data.repoId}`, JSON.stringify({ ...repoData, overview }));
+          // Use a smaller metadata-only object for localStorage if possible, or just skip it if it's too big
+          try {
+            localStorage.setItem(`repo_data_${data.repoId}`, JSON.stringify({ ...repoData, overview }));
+          } catch (err) {
+            console.warn("localStorage quota exceeded for repo_data, but IndexedDB should have the main cache.", err);
+          }
         } catch (e) {
           console.error("Overview generation failed:", e);
         }

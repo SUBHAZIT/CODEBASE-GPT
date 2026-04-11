@@ -151,12 +151,48 @@ async function fetchWithFailover(
   );
 }
 
+// ── Context Truncation Utility ───────────────────────────────────────────────
+/**
+ * Truncates the repoContext to fit within typical LLM context windows (e.g. 128k tokens).
+ * A safe limit of 400,000 characters is roughly 100,000 tokens, leaving enough room
+ * for system prompts, history, and a generous response.
+ */
+function truncateContext(context: string, maxChars = 400_000): string {
+  if (!context || context.length <= maxChars) return context;
+  
+  console.log(`[truncate] Truncating context from ${context.length} to ${maxChars} characters`);
+  
+  // Try to truncate at a file boundary if possible
+  const files = context.split("--- ");
+  let currentLength = 0;
+  const truncatedFiles: string[] = [];
+  
+  for (const file of files) {
+    if (!file.trim()) continue;
+    const fileBlock = `--- ${file}`;
+    if (currentLength + fileBlock.length > maxChars) {
+      if (truncatedFiles.length === 0) {
+        // If even the first file is too big, hard truncate it
+        return fileBlock.slice(0, maxChars) + "\n... (truncated)";
+      }
+      break;
+    }
+    truncatedFiles.push(fileBlock);
+    currentLength += fileBlock.length;
+  }
+  
+  return truncatedFiles.join("\n") + "\n\n... (context truncated due to size limits)";
+}
+
 // ── Main Server ─────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { messages, repoContext, action } = await req.json();
+    const { messages, repoContext: rawContext, action } = await req.json();
+    
+    // Truncate context to stay within 128k token limit (approx 400k characters)
+    const repoContext = truncateContext(rawContext || "");
 
     let systemPrompt = "";
     let userMessages = messages || [];

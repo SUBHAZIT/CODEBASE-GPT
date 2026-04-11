@@ -26,6 +26,7 @@ import {
 import { useUserAuth } from "@/hooks/use-user-auth";
 import { LogOut, User as UserIcon, Settings as SettingsIcon } from "lucide-react";
 import { indexRepository, generateOverview } from "@/lib/api";
+import { getRepoCache, setRepoCache } from "@/lib/db";
 
 const QUESTION_ICONS = [LogIn, Info, Database, GitBranch];
 
@@ -61,33 +62,53 @@ const RepoDashboard = () => {
   useEffect(() => {
     if (storeMeta || !repoId || fetchAttempted.current) return;
 
-    // Try localStorage cache first (keyed by repoId)
-    const cached = localStorage.getItem(`repo_data_${repoId}`);
-    if (cached) {
+    // Try storage cache first (keyed by repoId)
+    const loadCached = async () => {
       try {
-        const data = JSON.parse(cached);
-        setRepoData(data);
-        if (data.overview) setOverview(data.overview);
-        return;
-      } catch { /* ignore bad cache */ }
-    }
+        const cached = await getRepoCache(`repo_data_${repoId}`);
+        if (cached) {
+          console.log("Found cached data in IndexedDB for:", repoId);
+          setRepoData(cached);
+          if (cached.overview) setOverview(cached.overview);
+          return true;
+        }
+      } catch (err) {
+        console.warn("IndexedDB cache read failed:", err);
+      }
 
-    // Parse owner/repo from the repoId
-    const parsed = parseRepoId(repoId);
-    if (!parsed) return;
+      // Fallback to localStorage for small/legacy caches
+      try {
+        const legacyCached = localStorage.getItem(`repo_data_${repoId}`);
+        if (legacyCached) {
+          const data = JSON.parse(legacyCached);
+          setRepoData(data);
+          if (data.overview) setOverview(data.overview);
+          return true;
+        }
+      } catch { /* ignore */ }
+      return false;
+    };
 
-    fetchAttempted.current = true;
-    setLoading(true);
-    setFetchError(null);
-    setLoadingMessage(`Fetching ${parsed.owner}/${parsed.repo} from GitHub...`);
+    const init = async () => {
+      if (await loadCached()) return;
 
-    const githubUrl = `https://github.com/${parsed.owner}/${parsed.repo}`;
-    const token = localStorage.getItem("github_pat") || undefined;
+      // Parse owner/repo from the repoId
+      const parsed = parseRepoId(repoId);
+      if (!parsed) return;
 
-    indexRepository(githubUrl, token, (stage, message) => {
-      setLoadingMessage(message);
-    })
-      .then(async (data) => {
+      fetchAttempted.current = true;
+      setLoading(true);
+      setFetchError(null);
+      setLoadingMessage(`Fetching ${parsed.owner}/${parsed.repo} from GitHub...`);
+
+      const githubUrl = `https://github.com/${parsed.owner}/${parsed.repo}`;
+      const token = localStorage.getItem("github_pat") || undefined;
+
+      try {
+        const data = await indexRepository(githubUrl, token, (stage, message) => {
+          setLoadingMessage(message);
+        });
+
         const repoData = {
           repoId: data.repoId,
           meta: data.meta,
@@ -101,7 +122,11 @@ const RepoDashboard = () => {
         setRepoData(repoData as any);
 
         // Cache for future visits
-        localStorage.setItem(`repo_data_${repoId}`, JSON.stringify(repoData));
+        try {
+          await setRepoCache(`repo_data_${repoId}`, repoData);
+        } catch (err) {
+          console.warn("Failed to cache repo data in IndexedDB:", err);
+        }
 
         setLoadingMessage("Generating AI overview...");
         setOverviewLoading(true);
@@ -109,7 +134,11 @@ const RepoDashboard = () => {
           const overview = await generateOverview(data.repoContext);
           setOverview(overview as any);
           // Persist overview to cache
-          localStorage.setItem(`repo_data_${repoId}`, JSON.stringify({ ...repoData, overview }));
+          try {
+            await setRepoCache(`repo_data_${repoId}`, { ...repoData, overview });
+          } catch (err) {
+            console.warn("Failed to update cache with overview:", err);
+          }
         } catch (e) {
           console.error("Overview generation failed:", e);
           setOverviewError(e instanceof Error ? e.message : "Failed to generate overview");
@@ -117,12 +146,14 @@ const RepoDashboard = () => {
           setOverviewLoading(false);
         }
         setLoading(false);
-      })
-      .catch((err) => {
+      } catch (err: any) {
         console.error("Auto-fetch failed:", err);
         setFetchError(err.message || "Failed to load repository");
         setLoading(false);
-      });
+      }
+    };
+
+    init();
   }, [repoId, storeMeta, setRepoData, setOverview, retryCount]);
 
   // Auto-generate overview when store has repo data but no overview
@@ -134,18 +165,19 @@ const RepoDashboard = () => {
     setOverviewError(null);
 
     generateOverview(storeRepoContext)
-      .then((overview) => {
+      .then(async (overview) => {
         setOverview(overview as any);
         // Persist to cache
         if (repoId) {
           try {
-            const cached = localStorage.getItem(`repo_data_${repoId}`);
+            const cached = await getRepoCache(`repo_data_${repoId}`);
             if (cached) {
-              const data = JSON.parse(cached);
-              data.overview = overview;
-              localStorage.setItem(`repo_data_${repoId}`, JSON.stringify(data));
+              cached.overview = overview;
+              await setRepoCache(`repo_data_${repoId}`, cached);
             }
-          } catch { /* ignore */ }
+          } catch (err) {
+            console.warn("Failed to update cache with overview in background:", err);
+          }
         }
       })
       .catch((e) => {
@@ -479,7 +511,7 @@ const RepoDashboard = () => {
                   <div>
                     <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
                       PRGPT - AI PR REVIEWER
-                      <span className="px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20 text-[8px] text-teal-500 font-black uppercase tracking-tighter">UNDER DEVELOPMENT</span>
+                      <span className="px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20 text-[8px] text-teal-500 font-black uppercase tracking-tighter">MARKETPLACE LAUNCHED</span>
                     </h3>
                     <p className="text-xs text-muted-foreground italic">Automated reviews, summarization, and interactive PR chat.</p>
                   </div>
